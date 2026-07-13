@@ -1,0 +1,8 @@
+node_modules/
+.env
+.env.*
+*.log
+sentinel.log
+*.cast
+test/tier2-results.json
+test/tier2-results.md

@@ -5,6 +5,12 @@
   "type": "module",
   "description": "Runtime defense agent that detects agentic AI attackers by their self-narration signature.",
   "scripts": {
-    "test": "bun run test/runCorpus.ts"
+    "test": "bun run test/runCorpus.ts",
+    "generalize": "bun run test/generalization.ts",
+    "tier2:smoke": "bun run test/tier2.ts --smoke",
+    "tier2": "bun run test/tier2.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.111.0"
   }
 }

@@ -1,0 +1,10 @@
+{
+  "name": "aris-sentinel",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Runtime defense agent that detects agentic AI attackers by their self-narration signature.",
+  "scripts": {
+    "test": "bun run test/runCorpus.ts"
+  }
+}

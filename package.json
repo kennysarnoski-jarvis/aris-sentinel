@@ -8,7 +8,9 @@
     "test": "bun run test/runCorpus.ts",
     "generalize": "bun run test/generalization.ts",
     "tier2:smoke": "bun run test/tier2.ts --smoke",
-    "tier2": "bun run test/tier2.ts"
+    "tier2": "bun run test/tier2.ts",
+    "pipeline:stub": "bun run test/pipeline.ts --stub",
+    "pipeline": "bun run test/pipeline.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.111.0"

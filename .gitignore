@@ -6,3 +6,4 @@ sentinel.log
 *.cast
 test/tier2-results.json
 test/tier2-results.md
+test/pipeline-results.md

@@ -10,6 +10,8 @@ An agentic AI attacker can't stop narrating its intent. JADEPUFFER's payloads we
 
 Sentinel detects that signature. It is **app-agnostic** — it looks at the attacker's LLM, not the customer's code — so the same detector ships to every customer with **zero per-corp tuning**.
 
+JADEPUFFER is the **existence proof, not the target**. A pure JADEPUFFER signature would be worthless the moment the next crew changes its prompt. Sentinel productizes the *category* — self-narration — so it catches agentic attackers it was never tuned on.
+
 ## Architecture (product)
 
 - **Sensors (on the box)** — eBPF / Falco taps on exec / file / DB / network sinks. Commodity; we stand on it.
@@ -18,21 +20,34 @@ Sentinel detects that signature. It is **app-agnostic** — it looks at the atta
 
 Per-corp adaptation happens at **deploy-time** (a surfacer pass builds a per-corp sink map + baseline), not in the detector. Agent = a portable Go binary; brain = the Aris cloud.
 
-## v0 (this scaffold)
+## What's built (this repo)
 
-The universal core, testable without a kernel or a customer box: the **narration scorer** + a **labeled corpus**.
+The universal core, testable without a kernel or a customer box — the full two-tier decision path end to end.
 
-- `detector/` — the scorer (`narrationScore`) + feature extractors (tier-1 fast filter).
-- `corpus/` — labeled samples:
-  - `positives/` — agentic-narrated payloads, seeded from JADEPUFFER's documented artifacts
-  - `negatives/benign/` — verbose-but-legit ops code (false-positive test)
-  - `negatives/human-malware/` — terse, un-narrated malware (the **specificity** test)
-- `test/runCorpus.ts` — scores every sample, prints score + evidence, reports precision/recall.
+- **`detector/decode.ts`** — surfaces every plausible base64/hex/nested decoding so the scorer inspects the layer where the attacker hid the narration (incl. inside `exec(b64decode(...))`). The evasion becomes the trap.
+- **`detector/features.ts` + `narrationScore.ts`** — tier 1: the fast, local, explainable feature filter. Six signatures (ROI target-ranking, first-person agent voice, plan/phase structure, diagnosis-then-fix, intent-commentary density, exfil/ransom narration). Scores → `clear` / `escalate` / `block`. Signals are **deduped per feature** so one dual-use phrase repeated three ways can't stack itself over the block line — a BLOCK requires several *distinct* signals.
+- **`detector/adjudicate.ts`** — tier 2: the Aris LLM adjudication (`claude-opus-4-8`, adaptive thinking). Judges the *concept* of self-narration, so it catches agentic attacks in styles the regexes never saw. **Fails closed**: a refusal or API error on an offensive payload is treated as suspicious, never crashes, never passes a payload. (In production this is the Aris cloud, KG-enriched.)
+- **`detector/decide.ts`** — `decide(raw)`, the entry point a sensor calls. `block`→block and `clear`→allow resolve locally with **zero LLM spend**; only the `escalate` band pays for tier-2 adjudication. The fast filter shields the cloud.
+- **`corpus/`** — 27 labeled samples: `positives/` (agentic-narrated, multiple attack types), `negatives/benign/` (verbose-but-legit ops code — the false-positive test), `negatives/human-malware/` (terse, un-narrated malware — the **specificity** test).
 
-**Run:** `bun run test/runCorpus.ts`
+## Tests
 
-**The result to look for:** positives **flagged**, benign **clear**, and human-malware **clear** — proving the score keys on *agentic narration*, not merely "looks malicious." That specificity is the whole wedge.
+| command | what it proves | needs key |
+|---|---|---|
+| `bun run test` | tier-1 corpus: **precision 1.00, recall 1.00** on 27 samples; decode stage defeats base64 | no |
+| `bun run generalize` | tier-1 alone only *escalates* novel-style attacks (the honest gap) | no |
+| `bun run pipeline:stub` | routing: `escalate`→tier-2, `block`/`clear` stay local | no |
+| `bun run tier2` | tier-2 catches the 3 tier-1 misses; benign/terse stay not-agentic | **yes** |
+| `bun run pipeline` | **18/18 e2e**: attacks blocked, all 12 benign ALLOWED (7 at tier-1, 5 adjudged not-agentic at tier-2) | **yes** |
 
-## Not in v0 (next)
+Key-needed tests read `ANTHROPIC_API_KEY` from the env and write results to `test/*-results.md` (gitignored) — read the file rather than pasting attack-payload output around. `tier2:smoke` runs one cheap Haiku call to confirm the key before the full run.
 
-eBPF sensor layer, the base64/nested decode stage, the Aris-cloud escalation call, the deploy-time sink-mapper, the Go agent packaging.
+**The result that sells it:** attacks blocked (tier-1 *or* tier-2), benign allowed at **both** tiers, terse human-malware clear. The escalate band on verbose ops code is a *cost* (a tier-2 call), not a false positive — the LLM adjudicates it not-agentic. That specificity — keying on *agentic narration*, not "looks malicious" — is the whole wedge.
+
+## Langflow demo (CVE-2025-3248)
+
+`interposition/sentinel-langflow-demo.mjs` reverse-proxies a vulnerable Langflow and blocks the JADEPUFFER-style RCE payload at the code-exec sink before `exec()` runs. See [RUNBOOK.md](RUNBOOK.md). (Note: the portable demo acts on the tier-1 `block` verdict only — it has no cloud dependency, so it does not yet call tier-2 on `escalate`.)
+
+## Not built yet (next)
+
+eBPF/Falco sensor layer, the Aris-cloud escalation transport (KG enrichment), the deploy-time sink-mapper, the Go agent packaging, and wiring tier-2 into the live demo.

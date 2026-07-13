@@ -46,8 +46,8 @@ Key-needed tests read `ANTHROPIC_API_KEY` from the env and write results to `tes
 
 ## Langflow demo (CVE-2025-3248)
 
-`interposition/sentinel-langflow-demo.mjs` reverse-proxies a vulnerable Langflow and blocks the JADEPUFFER-style RCE payload at the code-exec sink before `exec()` runs. See [RUNBOOK.md](RUNBOOK.md). (Note: the portable demo acts on the tier-1 `block` verdict only — it has no cloud dependency, so it does not yet call tier-2 on `escalate`.)
+`interposition/sentinel-langflow-demo.mjs` reverse-proxies a vulnerable Langflow and blocks the JADEPUFFER-style RCE payload at the code-exec sink before `exec()` runs. It runs the **full two tiers**: tier-1 blocks the heavily-narrated payload locally, and — when `ANTHROPIC_API_KEY` is set — tier-2 (a raw-fetch port of `adjudicate.ts`, no SDK dep) catches the lighter *stealth* payload that tier-1 only escalates. Without a key it degrades to tier-1 only. See [RUNBOOK.md](RUNBOOK.md).
 
 ## Not built yet (next)
 
-eBPF/Falco sensor layer, the Aris-cloud escalation transport (KG enrichment), the deploy-time sink-mapper, the Go agent packaging, and wiring tier-2 into the live demo.
+eBPF/Falco sensor layer, the Aris-cloud escalation transport (KG enrichment), the deploy-time sink-mapper, and the Go agent packaging.

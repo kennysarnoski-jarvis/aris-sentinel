@@ -1,5 +1,5 @@
 import { EXTRACTORS } from "./features";
-import type { ScoreResult, Verdict } from "./types";
+import type { FeatureHit, ScoreResult, Verdict } from "./types";
 
 /**
  * Saturating normalization: many independent weak signals shouldn't blow past 1,
@@ -25,7 +25,19 @@ function verdictFor(score: number): Verdict {
  */
 export function narrationScore(payload: string): ScoreResult {
   const hits = EXTRACTORS.flatMap((f) => f(payload));
-  const weightSum = hits.reduce((s, h) => s + h.weight, 0);
+
+  // Dedupe per feature: the SAME signal phrased three ways is still ONE signal, not
+  // three times the evidence. Without this, dual-use language (e.g. "rank by value")
+  // stacks itself over the block line — a benign revenue report reads as an attacker
+  // ranking targets. Each distinct feature contributes once (its max-weight hit), so a
+  // BLOCK now requires several DISTINCT signals, which is what actually separates an
+  // agentic attacker (ROI + exfil + first-person + phase) from dual-use ops code.
+  const strongest = new Map<string, FeatureHit>();
+  for (const h of hits) {
+    const cur = strongest.get(h.feature);
+    if (!cur || cur.weight < h.weight) strongest.set(h.feature, h);
+  }
+  const weightSum = [...strongest.values()].reduce((s, h) => s + h.weight, 0);
   const score = normalize(weightSum);
   return { score, verdict: verdictFor(score), hits };
 }

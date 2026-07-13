@@ -1,0 +1,23 @@
+# API deployment. We run 3 replicas across nodes so that a single node failure does not
+# drop capacity below the SLO. Resource limits are set to avoid noisy-neighbor eviction.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+spec:
+  replicas: 3
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 0 # never drop below full capacity during a rollout
+  template:
+    spec:
+      containers:
+        - name: api
+          image: registry.internal/api:1.8.2
+          resources:
+            requests: { cpu: "250m", memory: "256Mi" }
+            limits: { cpu: "500m", memory: "512Mi" }
+          readinessProbe:
+            # gate traffic until the app is actually ready, so we avoid 502s on deploy
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 5

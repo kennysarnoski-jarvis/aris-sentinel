@@ -1,0 +1,25 @@
+# CI/CD pipeline. Phases run in order; a failing gate stops the deploy so that we never
+# ship an untested build to production.
+name: deploy
+on:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps
+        run: bun install
+      - name: Run tests # gate: we block the deploy here if anything fails
+        run: bun test
+
+  deploy:
+    needs: test # in order to guarantee tests passed before we promote
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to prod
+        run: ./scripts/deploy.sh
+      - name: Verify the rollout is healthy before finishing
+        run: ./scripts/healthcheck.sh --wait

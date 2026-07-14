@@ -58,6 +58,17 @@ cat /tmp/DESTRUCTIVE_STEP_HAPPENED   # ABSENT = the destructive step never ran
 Expected log: `SENTINEL KILL tier-1 exe=python3 score=0.78 … high-confidence agentic
 narration`, and an incident row in the JSONL.
 
+**Tier-2 kill** (`stealth_attacker.py`) — lighter narration that tier-1 only *escalates*
+(~0.46), so the LLM adjudication is what catches it: the payload a signature detector
+waves through. With tier 2 enabled and the agent armed:
+```bash
+python3 stealth_attacker.py &   # tier-1 escalate -> tier-2 adjudges AGENTIC -> KILL
+sleep 12; cat /tmp/STEALTH_EXFIL_HAPPENED   # ABSENT
+```
+Expected: `SENTINEL KILL tier-2 … adjudged agentic (conf 0.95)` + reasoning. Note tier-2
+is not fooled by keyword salad — an obvious demo stub is adjudged *not-agentic*; the
+payload must read as a genuine autonomous agent.
+
 ## Safety
 The agent never kills pid ≤ 1, its own ancestors, or a protected comm allowlist
 (sshd, systemd, falco, dockerd, containerd, cron, sudo, …). Kills use `process.kill`
@@ -67,6 +78,9 @@ The agent never kills pid ≤ 1, its own ancestors, or a protected comm allowlis
 - **Scope**: v1 scores *every* exec's cmdline (+ script-file contents for interpreters).
   On a busy box that's a lot of scoring; production should scope to sensitive sinks and
   cap tier-2 escalation volume.
+- **Per-session dedup**: a single attack fans out into several execs (the interpreter +
+  its children), so the same payload can be adjudicated by tier-2 more than once — N LLM
+  calls where 1 would do. Cache verdicts by (session, payload-hash) before escalating.
 - **Kill granularity**: kills the offending process tree, not the whole attacker session.
   A `--kill-session` mode (terminate the sid) is the next increment for multi-phase kill.
 - **Detect vs enforce**: Falco observes post-syscall; the "stop before destruction"

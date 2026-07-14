@@ -115,6 +115,7 @@ function extractPayload(f) {
 // to a single tier-2 call and a single clean log line. killTree already covers the tree.
 const decided = new Map();
 const DEDUP_MAX = 4000;
+const DEDUP_WINDOW_MS = 15_000; // collapse one launch's exec fan-out; re-catch a later re-run
 function hash(s) { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return h >>> 0; }
 
 // ── response ─────────────────────────────────────────────────────────────────
@@ -163,8 +164,9 @@ async function handleEvent(f) {
   // collapse duplicate execs of the same attack (same session + same payload) so we
   // adjudicate once. Set the key BEFORE awaiting so concurrent events don't race in.
   const key = `${f["proc.sid"]}:${hash(payload)}`;
-  if (decided.has(key)) return;
-  decided.set(key, 1);
+  const prev = decided.get(key);
+  if (prev && Date.now() - prev < DEDUP_WINDOW_MS) return;
+  decided.set(key, Date.now());
   if (decided.size > DEDUP_MAX) decided.delete(decided.keys().next().value);
 
   let d;

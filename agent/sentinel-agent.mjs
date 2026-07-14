@@ -37,6 +37,11 @@ const HOST = process.env.ARIS_HOST || hostname();
 const OWN_PID = process.pid;
 const MAX_PAYLOAD = 256 * 1024;
 
+// Blend in. A generic process title means ps/top show a mundane daemon, not a
+// security tool — so an attacker's recon has nothing obvious to target, and an
+// autonomous attacker (not trained to know what Aris is) can't confidently kill it.
+try { process.title = process.env.ARIS_PROC_NAME || "sys-telemetryd"; } catch {}
+
 // Never kill these (nor their ancestors): system-critical + our own toolchain.
 const PROTECTED_COMMS = new Set([
   "systemd", "init", "sshd", "falco", "node", "containerd", "dockerd", "docker",

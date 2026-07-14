@@ -69,6 +69,24 @@ Expected: `SENTINEL KILL tier-2 … adjudged agentic (conf 0.95)` + reasoning. N
 is not fooled by keyword salad — an obvious demo stub is adjudged *not-agentic*; the
 payload must read as a genuine autonomous agent.
 
+## Stealth / de-branding (install.sh)
+`sudo ./install.sh [name]` deploys under a GENERIC identity so on-box recon reveals no
+security tool — an autonomous attacker not trained to recognize Aris sees a boring
+`sys-telemetryd` daemon it can't confidently kill (and killing it is a tamper event the
+dead-man's switch catches). Pick a DIFFERENT name per customer so the disguise isn't
+itself a signature. It de-brands:
+- **process** → generic `process.title` (ps/top show `sys-telemetryd`, not `node sentinel-agent.mjs`)
+- **service** → `<name>.service` ("System telemetry agent"), `Restart=always` (respawns if killed)
+- **files** → `/usr/local/lib/<name>/{agentd,core,rules}`, env `/etc/<name>.env`, incidents `/var/lib/<name>/`
+- **Falco** → runs from a renamed copy `<name>-probe` (its own process blends in)
+
+**Known remaining tells (need the eBPF-native rewrite to fully close):** Falco is still an
+apt package — `/etc/falco`, `/usr/bin/falco`, `dpkg -l | grep falco` reveal it to *deep*
+recon (the running process is renamed but the package isn't; the config dir is required).
+Also: env var names in `/proc/<pid>/environ` (`ANTHROPIC_API_KEY` reveals LLM use), and
+outbound to `youraris.com` / `api.anthropic.com`. These defeat *casual* recon today; the
+deeper layer is v2.
+
 ## Safety
 The agent never kills pid ≤ 1, its own ancestors, or a protected comm allowlist
 (sshd, systemd, falco, dockerd, containerd, cron, sudo, …). Kills use `process.kill`

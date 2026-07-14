@@ -34,7 +34,8 @@ const roiPriority: Extractor = (t) =>
 // 2. First-person agent narration — the agent talking about its own plan/goals
 const agentVoice: Extractor = (t) =>
   collect(t, "agent_first_person", 3, [
-    /\bI (will|need to|am going to|have (found|enumerated|identified)|should|'ll)\b/i,
+    /\bI (will|need to|am going to|have (found|enumerated|identified|ranked)|should|'ll)\b/i,
+    /\bI['’](ll|m|ve|d)\b/i, // contractions: I'll, I'm, I've, I'd — a thin-narration agent still narrates
     /\b(my|the) (goal|objective|plan|next step) (is|:)/i,
     /\blet me\b/i,
     /\bnow I('| a| wi)?ll\b/i,

@@ -27,6 +27,7 @@ const FEATURES = [
   ]],
   ["agent_first_person", 3, [
     /\bI (will|need to|am going to|have (found|enumerated|identified|ranked)|should|'ll)\b/i,
+    /\bI['’](ll|m|ve|d)\b/i, // contractions: I'll, I'm, I've, I'd — a thin-narration agent still narrates
     /\b(my|the) (goal|objective|plan|next step) (is|:)/i,
     /\blet me\b/i,
     /\bI (proceed|will proceed)\b/i,

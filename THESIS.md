@@ -99,6 +99,13 @@ Huntress all started) — high-touch, builds design-partner trust, defers self-s
 
 - **Terser evasion:** an agent explicitly told "don't narrate" slips tier-1 (the honest
   gap tier-2 exists to close) — but staying terse costs it capability (see the moat).
+- **Single-line intent is a deliberate boundary:** tier-2 won't convict *one* vague
+  sentence ("I'll copy some records") — it could be a human admin's note, and convicting
+  it would trade away the specificity that keeps benign ops code alive. A real multi-step
+  agent's *accumulated* narration crosses the bar (verified: a looping/mutating attacker
+  gets caught on every substantive attempt — including when it narrates *investigating its
+  own death* — see `test/loop/`). Only a single thin line or full silence slips, and
+  neither accomplishes a real objective.
 - **Deep-recon stealth:** casual recon is defeated; the Falco *package* fingerprint
   (`/etc/falco`, `dpkg`) and the `ANTHROPIC_API_KEY` env/network tells need the
   eBPF-native rewrite (v2) to fully close.

@@ -1,0 +1,16 @@
+# Aris Sentinel — Falco capture rule.
+#
+# One permissive rule that emits EVERY process exec as JSON. Aris does its OWN
+# scoring on the decoded payload, so we don't rely on Falco's threat rules — we
+# just want the raw exec stream. The agent (sentinel-agent.mjs) consumes these
+# events, scores each for the agentic-narration signature, and kills on a block.
+#
+# NB: loaded with `-r`, which OVERRIDES Falco's default rules_files — so the
+# condition must be SELF-CONTAINED (no `spawned_process` macro, which lives in the
+# default falco_rules.yaml and would be undefined here).
+- rule: aris_exec_capture
+  desc: Emit every process exec for Aris Sentinel scoring
+  condition: (evt.type in (execve, execveat) and evt.dir=<)
+  output: "aris_exec pid=%proc.pid ppid=%proc.ppid sid=%proc.sid user=%user.name exe=%proc.exe pname=%proc.pname cmdline=%proc.cmdline"
+  priority: INFORMATIONAL
+  tags: [aris]

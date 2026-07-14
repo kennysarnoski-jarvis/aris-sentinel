@@ -48,6 +48,23 @@ Key-needed tests read `ANTHROPIC_API_KEY` from the env and write results to `tes
 
 `interposition/sentinel-langflow-demo.mjs` reverse-proxies a vulnerable Langflow and blocks the JADEPUFFER-style RCE payload at the code-exec sink before `exec()` runs. It runs the **full two tiers**: tier-1 blocks the heavily-narrated payload locally, and — when `ANTHROPIC_API_KEY` is set — tier-2 (a raw-fetch port of `adjudicate.ts`, no SDK dep) catches the lighter *stealth* payload that tier-1 only escalates. Without a key it degrades to tier-1 only. See [RUNBOOK.md](RUNBOOK.md).
 
+## On-box agent (the "install and wait" product)
+
+`agent/` is the resident daemon a corp installs. It taps **process execs via Falco
+(eBPF)**, scores each with the two-tier brain (`sentinel-core.mjs`, a dependency-free
+port of the detector), and on a block verdict **kills the offending process tree** —
+stopping the attacker's AI at its first narrated action, before the destructive step.
+
+- `sentinel-core.mjs` — portable detector (tier-1 filter + decode + tier-2 fetch), no deps.
+- `sentinel-agent.mjs` — consumes Falco's exec stream → `decide()` → SIGKILL the tree, with
+  a protected-comm allowlist, `--dry-run`, and `--selftest` (no Falco/root). Incidents → JSONL.
+- `aris_rules.yaml` — the permissive Falco rule that emits every exec as JSON.
+
+**Verified live** on Ubuntu 24.04 / kernel 6.17 / Falco 0.44: a narrated attacker
+(`attacker_impact.py`) is SIGKILLed at exec (`SENTINEL KILL tier-1 score=0.78`) and its
+destructive step never runs, while a benign job is untouched. See [agent/DEPLOY.md](agent/DEPLOY.md).
+
 ## Not built yet (next)
 
-eBPF/Falco sensor layer, the Aris-cloud escalation transport (KG enrichment), the deploy-time sink-mapper, and the Go agent packaging.
+The Aris-cloud escalation transport (KG enrichment), the deploy-time sink-mapper, sink
+scoping + tier-2 rate control for busy hosts, session-level kill, and Go agent packaging.

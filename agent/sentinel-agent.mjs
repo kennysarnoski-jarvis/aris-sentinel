@@ -92,8 +92,13 @@ function extractPayload(f) {
   const cmdline = f["proc.cmdline"] || "";
   const exe = basename(f["proc.exe"] || "");
   const pieces = [cmdline];
-  if (INTERPRETERS.has(exe)) {
-    for (const tok of cmdline.split(/\s+/).slice(1)) {
+  const args = cmdline.split(/\s+/);
+  // Read the script file ONLY when the interpreter is actually running a script
+  // (`python3 foo.py`). Skip inline-code forms (`-c`/`-e`) — the code is already in
+  // the cmdline, and a token that merely MENTIONS another script's path (e.g. a shell
+  // command referencing it) must not cause us to slurp+score that unrelated file.
+  if (INTERPRETERS.has(exe) && !args.includes("-c") && !args.includes("-e")) {
+    for (const tok of args.slice(1)) {
       if (tok.startsWith("-")) continue;
       if (existsSync(tok)) {
         try { pieces.push(readFileSync(tok, "utf8").slice(0, MAX_PAYLOAD)); } catch {}
@@ -103,6 +108,14 @@ function extractPayload(f) {
   }
   return pieces.join("\n").slice(0, MAX_PAYLOAD);
 }
+
+// Per-(session, payload) dedup: one attack fans out into several execs, so without
+// this the same payload is adjudicated (and logged, and billed) N times. Cache the
+// key SYNCHRONOUSLY before the async decide(), so concurrent duplicate events collapse
+// to a single tier-2 call and a single clean log line. killTree already covers the tree.
+const decided = new Map();
+const DEDUP_MAX = 4000;
+function hash(s) { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return h >>> 0; }
 
 // ── response ─────────────────────────────────────────────────────────────────
 const selfAncestors = ancestorsOf(OWN_PID);
@@ -146,6 +159,14 @@ async function handleEvent(f) {
   if (!pid || pid === OWN_PID) return;
   const payload = extractPayload(f);
   if (payload.trim().length < 3) return;
+
+  // collapse duplicate execs of the same attack (same session + same payload) so we
+  // adjudicate once. Set the key BEFORE awaiting so concurrent events don't race in.
+  const key = `${f["proc.sid"]}:${hash(payload)}`;
+  if (decided.has(key)) return;
+  decided.set(key, 1);
+  if (decided.size > DEDUP_MAX) decided.delete(decided.keys().next().value);
+
   let d;
   try { d = await decide(payload, { apiKey: API_KEY }); } catch (e) { return; }
   if (d.decision === "block") return respond(f, d, payload);

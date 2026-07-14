@@ -17,6 +17,7 @@
 import { spawn } from "node:child_process";
 import { readFileSync, existsSync, appendFileSync, readdirSync } from "node:fs";
 import { basename } from "node:path";
+import { hostname } from "node:os";
 import { createInterface } from "node:readline";
 import { decide } from "./sentinel-core.mjs";
 
@@ -27,6 +28,12 @@ const FALCO_BIN = process.env.FALCO_BIN || "falco";
 const RULES = process.env.ARIS_RULES || "/home/ubuntu/aris_rules.yaml";
 const INCIDENT_LOG = process.env.ARIS_INCIDENTS || "/var/log/aris-incidents.jsonl";
 const API_KEY = process.env.ANTHROPIC_API_KEY;
+// Off-box reporting -> Aris Cloud (youraris.com). The box may be compromised, so the
+// alert must egress to a place the attacker can't reach. ARIS_CLOUD_URL is the base
+// (e.g. https://youraris.com); we POST incidents to /api/local/sentinel/alert.
+const CLOUD_URL = process.env.ARIS_CLOUD_URL;
+const CLOUD_KEY = process.env.ARIS_INGEST_KEY || "";
+const HOST = process.env.ARIS_HOST || hostname();
 const OWN_PID = process.pid;
 const MAX_PAYLOAD = 256 * 1024;
 
@@ -129,6 +136,31 @@ function isProtected(pid, comm) {
   return null;
 }
 
+// The attacker's own words — the comment/narration lines from the payload. This is
+// the product superpower: the alert can say what the enemy AI was TRYING to do.
+function narrationSnippet(payload) {
+  const lines = payload.split("\n").map((l) => l.trim());
+  const narrated = lines.filter((l) => /^(#|\/\/|--|\*)/.test(l) || /\bI (will|need to|am|have|'ll)\b/i.test(l));
+  const text = (narrated.length ? narrated : lines.filter(Boolean)).join(" ").replace(/^[#/*\-\s]+/gm, "").trim();
+  return text.slice(0, 600);
+}
+
+// Fire-and-forget report to Aris Cloud. Called BEFORE the kill so the alert is already
+// in flight even if terminating the process triggers attacker retaliation. Never throws.
+function reportToCloud(incident) {
+  if (!CLOUD_URL) return;
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), 5000);
+  fetch(`${CLOUD_URL}/api/local/sentinel/alert`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-aris-key": CLOUD_KEY },
+    body: JSON.stringify(incident),
+    signal: ctl.signal,
+  }).then((r) => { if (!r.ok) log(`cloud alert failed: HTTP ${r.status}`); })
+    .catch((e) => log(`cloud alert error: ${e.name === "AbortError" ? "timeout" : e.message}`))
+    .finally(() => clearTimeout(t));
+}
+
 function respond(f, d, payload) {
   const pid = Number(f["proc.pid"]);
   const comm = basename(f["proc.exe"] || f["proc.pname"] || "");
@@ -143,14 +175,22 @@ function respond(f, d, payload) {
   if (d.reason) log(`            ${d.reason}`);
   if (d.adjudication?.reasoning) log(`            reasoning: ${d.adjudication.reasoning}`);
 
+  const base = {
+    host: HOST, ts: now(), decision: "block", tier: d.tier,
+    action: DRY_RUN ? "dry-run" : guard ? `spared:${guard}` : "killed",
+    pid, ppid: Number(f["proc.ppid"]), sid: Number(f["proc.sid"]), user: f["user.name"], exe: comm,
+    cmdline: f["proc.cmdline"], score: d.score, signals: d.signals,
+    conf: d.adjudication?.confidence ?? null, reasoning: d.adjudication?.reasoning ?? null,
+    narration: narrationSnippet(payload),
+  };
+
+  // Egress the alert to Aris Cloud FIRST — before we touch the process.
+  reportToCloud(base);
+
   let killed = [];
   if (!DRY_RUN && !guard) killed = killTree(pid);
 
-  const incident = {
-    ts: now(), decision: "block", tier: d.tier, action: DRY_RUN ? "dry-run" : guard ? `spared:${guard}` : "killed",
-    pid, ppid: Number(f["proc.ppid"]), sid: Number(f["proc.sid"]), user: f["user.name"], exe: comm,
-    cmdline: f["proc.cmdline"], score: d.score, signals: d.signals, tier2: d.adjudication || null, killed,
-  };
+  const incident = { ...base, tier2: d.adjudication || null, killed };
   try { appendFileSync(INCIDENT_LOG, JSON.stringify(incident) + "\n"); } catch {}
 }
 
@@ -196,6 +236,7 @@ function main() {
   log(`Aris Sentinel agent starting`);
   log(`  mode: ${DRY_RUN ? "DRY-RUN (detect+log, no kill)" : "ARMED (kills on detection)"}`);
   log(`  tier 2: ${API_KEY ? "ENABLED" : "disabled (tier-1 only, no ANTHROPIC_API_KEY)"}`);
+  log(`  cloud alerts: ${CLOUD_URL ? `-> ${CLOUD_URL} (Telegram via Aris Cloud)` : "disabled (set ARIS_CLOUD_URL)"}`);
   log(`  incidents -> ${INCIDENT_LOG}`);
 
   const falco = spawn(FALCO_BIN, [

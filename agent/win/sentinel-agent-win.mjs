@@ -17,6 +17,7 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { readFileSync } from "node:fs";
 import { hostname } from "node:os";
+import { fileURLToPath } from "node:url";
 import { decide } from "../sentinel-core.mjs";
 
 const ENFORCE = process.argv.includes("--enforce");
@@ -27,7 +28,7 @@ const API_KEY = process.env.ANTHROPIC_API_KEY;
 const CLOUD_URL = process.env.ARIS_CLOUD_URL;
 const CLOUD_KEY = process.env.ARIS_INGEST_KEY || "";
 const HOST = process.env.ARIS_HOST || hostname();
-const SENSOR = process.env.ARIS_SENSOR || new URL("./sensor.ps1", import.meta.url).pathname;
+const SENSOR = process.env.ARIS_SENSOR || fileURLToPath(new URL("./sensor.ps1", import.meta.url));
 const OWN_PID = process.pid;
 const MAX_PAYLOAD = 256 * 1024;
 
@@ -116,7 +117,7 @@ function main() {
 
   if (MOCK) {
     log("  MOCK — replaying agent/win/mock-events.jsonl (no Windows, no kill)\n");
-    const fixture = new URL("./mock-events.jsonl", import.meta.url).pathname;
+    const fixture = fileURLToPath(new URL("./mock-events.jsonl", import.meta.url));
     for (const line of readFileSync(fixture, "utf8").split("\n")) {
       const s = line.trim();
       if (!s.startsWith("{")) continue;

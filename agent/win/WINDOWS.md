@@ -4,15 +4,19 @@ JadePuffer lives on Windows: PowerShell, WMI, Active Directory, pass-the-hash. T
 detector is OS-agnostic — it scores the attacker's *narration*, not the language — so the
 Windows port is **the same `decide()` brain with a different sensor and kill primitive.**
 
-## What's proven vs. what needs a Windows box
+## Validated live (Windows Server 2022, 2026-07-15)
 
-- **Proven (runs on any machine):** the detector catches JadePuffer-style narrated
-  PowerShell with zero changes — `bun run test/windows.ts` → 5/5 (AD recon, lateral/PtH,
-  exfil all block; benign admin + terse cradle stay clear). The agent's event→decide→
-  respond loop is validated with `node agent/win/sentinel-agent-win.mjs --mock`.
-- **Needs a Windows host to validate live:** the PowerShell event-log read (`sensor.ps1`)
-  and the `taskkill` enforcement. Spin up a Windows Server VM (AWS/Azure/local Hyper-V)
-  to exercise these — the same way the Linux agent was validated on a Lightsail box.
+Proven end-to-end on a real box (Lightsail Windows Server 2022, Node 20):
+- **Detection:** narrated recon PowerShell → agent reads the live 4104 log → `SENTINEL
+  DETECTED tier-1 score=0.63` (monitor mode).
+- **Enforcement:** a narrated impact payload ("encrypt at +15s") → `SENTINEL KILL tier-1
+  score=0.83`, `taskkill` stopped the PowerShell process, the marker file **never got
+  written** — killed before impact.
+- **Alerting:** the detection reported off-box to Aris Cloud → Telegram, same as Linux.
+- The detector itself needs no Windows box: `bun run test/windows.ts` → 5/5.
+
+(The live run caught a real bug: `import.meta.url` `.pathname` gives `/C:/...` on Windows
+— fixed with `fileURLToPath`. That's exactly why you validate on the real OS.)
 
 ## The data source: PowerShell Script Block Logging (Event ID 4104)
 

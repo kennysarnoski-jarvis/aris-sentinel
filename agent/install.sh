@@ -12,7 +12,18 @@
 # ARIS_CLOUD_URL, ARIS_INGEST_KEY), so re-installing over the demo setup is seamless.
 set -euo pipefail
 
-NAME="${1:-sys-telemetryd}"
+# Args (any order): [disguise-name]  and optional --enforce.
+# Default is MONITOR mode (detect + alert, no kill) — safe for a first pilot. Add
+# --enforce only once you trust it on the target box.
+NAME="sys-telemetryd"
+EXECFLAGS=""
+for a in "$@"; do
+  case "$a" in
+    --enforce) EXECFLAGS=" --enforce" ;;
+    -*) ;;
+    *) NAME="$a" ;;
+  esac
+done
 SRC="$(cd "$(dirname "$0")" && pwd)"
 LIB="/usr/local/lib/$NAME"
 ENVF="/etc/$NAME.env"
@@ -58,7 +69,7 @@ After=network.target
 Type=simple
 EnvironmentFile=$ENVF
 WorkingDirectory=$LIB
-ExecStart=/usr/bin/node $LIB/agentd.mjs
+ExecStart=/usr/bin/node $LIB/agentd.mjs$EXECFLAGS
 Restart=always
 RestartSec=3
 
@@ -71,6 +82,7 @@ systemctl enable "$NAME.service" >/dev/null 2>&1 || true
 systemctl restart "$NAME.service"
 
 echo "installed as '$NAME'"
+echo "  mode    : ${EXECFLAGS:+ENFORCE (kills on detection)}${EXECFLAGS:-MONITOR (detect + alert, no kill — re-run with --enforce to arm)}"
 echo "  service : systemctl status $NAME"
 echo "  files   : $LIB   env: $ENVF"
 echo "  ps/top  : shows '$NAME' (not node/sentinel);  falco -> ${NAME}-probe"

@@ -6,8 +6,8 @@
 // and on a BLOCK verdict KILLS the offending process tree — stopping the attacker's
 // AI at its first narrated action, before the destructive step.
 //
-//   sudo node sentinel-agent.mjs              # arm it (kills on detection)
-//   sudo node sentinel-agent.mjs --dry-run    # detect + log only, never kill
+//   sudo node sentinel-agent.mjs              # MONITOR (default) — detect + alert, no kill
+//   sudo node sentinel-agent.mjs --enforce    # ENFORCE — kill the attack on detection
 //   node sentinel-agent.mjs --selftest        # score sample payloads, no Falco/root
 //
 //   env: ANTHROPIC_API_KEY (enables tier 2)   ARIS_RULES (falco rules path)
@@ -21,7 +21,12 @@ import { hostname } from "node:os";
 import { createInterface } from "node:readline";
 import { decide } from "./sentinel-core.mjs";
 
-const DRY_RUN = process.argv.includes("--dry-run");
+// SAFE BY DEFAULT: the agent detects + alerts + logs but NEVER kills unless you pass
+// --enforce. A false positive can't take down a customer's prod on day one; you flip
+// to --enforce only once you trust it on that box. (--dry-run is accepted as an alias
+// for the default monitor mode.)
+const ENFORCE = process.argv.includes("--enforce");
+const MONITOR = !ENFORCE;
 const SELFTEST = process.argv.includes("--selftest");
 const VERBOSE = process.env.ARIS_VERBOSE === "1";
 const FALCO_BIN = process.env.FALCO_BIN || "falco";
@@ -174,7 +179,7 @@ function respond(f, d, payload) {
   const decoded = d.decoded ? " (decoded)" : "";
 
   const guard = isProtected(pid, comm);
-  const action = DRY_RUN ? "WOULD-KILL (dry-run)" : guard ? `SPARED (${guard})` : "KILL";
+  const action = MONITOR ? "DETECTED (monitor — no kill)" : guard ? `SPARED (${guard})` : "KILL";
   log(`SENTINEL ${action}  tier-${d.tier}  pid=${pid} ppid=${f["proc.ppid"]} sid=${f["proc.sid"]} user=${f["proc.name"] || f["user.name"]} exe=${comm}${decoded}  score=${d.score.toFixed(2)}${how ? " " + how : ""}`);
   log(`            cmd: ${cmd}`);
   if (d.reason) log(`            ${d.reason}`);
@@ -182,7 +187,7 @@ function respond(f, d, payload) {
 
   const base = {
     host: HOST, ts: now(), decision: "block", tier: d.tier,
-    action: DRY_RUN ? "dry-run" : guard ? `spared:${guard}` : "killed",
+    action: MONITOR ? "monitored" : guard ? `spared:${guard}` : "killed",
     pid, ppid: Number(f["proc.ppid"]), sid: Number(f["proc.sid"]), user: f["user.name"], exe: comm,
     cmdline: f["proc.cmdline"], score: d.score, signals: d.signals,
     conf: d.adjudication?.confidence ?? null, reasoning: d.adjudication?.reasoning ?? null,
@@ -193,7 +198,7 @@ function respond(f, d, payload) {
   reportToCloud(base);
 
   let killed = [];
-  if (!DRY_RUN && !guard) killed = killTree(pid);
+  if (ENFORCE && !guard) killed = killTree(pid);
 
   const incident = { ...base, tier2: d.adjudication || null, killed };
   try { appendFileSync(INCIDENT_LOG, JSON.stringify(incident) + "\n"); } catch {}
@@ -239,7 +244,7 @@ async function selftest() {
 // ── main ─────────────────────────────────────────────────────────────────────
 function main() {
   log(`Aris Sentinel agent starting`);
-  log(`  mode: ${DRY_RUN ? "DRY-RUN (detect+log, no kill)" : "ARMED (kills on detection)"}`);
+  log(`  mode: ${ENFORCE ? "ENFORCE (kills the attack on detection)" : "MONITOR (detect + alert only — no kill; pass --enforce to arm)"}`);
   log(`  tier 2: ${API_KEY ? "ENABLED" : "disabled (tier-1 only, no ANTHROPIC_API_KEY)"}`);
   log(`  cloud alerts: ${CLOUD_URL ? `-> ${CLOUD_URL} (Telegram via Aris Cloud)` : "disabled (set ARIS_CLOUD_URL)"}`);
   log(`  incidents -> ${INCIDENT_LOG}`);

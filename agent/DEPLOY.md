@@ -40,8 +40,9 @@ sudo systemd-run --unit=aris-agent --working-directory=/home/ubuntu \
   -p EnvironmentFile=/etc/aris-sentinel.env \
   /usr/bin/node /home/ubuntu/sentinel-agent.mjs
 ```
-Modes: `--dry-run` (detect + log, never kill) while you tune; drop it to go live.
-Sanity-check with no root/Falco: `node sentinel-agent.mjs --selftest`.
+Modes — **safe by default**: with no flag the agent runs **MONITOR** (detect + alert,
+never kills). Add `--enforce` to let it kill on detection — do that only once you trust
+it on that box. Sanity-check with no root/Falco: `node sentinel-agent.mjs --selftest`.
 
 Logs: `journalctl -u aris-agent -f`. Incidents: `/var/log/aris-incidents.jsonl`.
 
@@ -70,11 +71,12 @@ is not fooled by keyword salad — an obvious demo stub is adjudged *not-agentic
 payload must read as a genuine autonomous agent.
 
 ## Stealth / de-branding (install.sh)
-`sudo ./install.sh [name]` deploys under a GENERIC identity so on-box recon reveals no
-security tool — an autonomous attacker not trained to recognize Aris sees a boring
-`sys-telemetryd` daemon it can't confidently kill (and killing it is a tamper event the
-dead-man's switch catches). Pick a DIFFERENT name per customer so the disguise isn't
-itself a signature. It de-brands:
+`sudo ./install.sh [name] [--enforce]` deploys under a GENERIC identity so on-box recon
+reveals no security tool — an autonomous attacker not trained to recognize Aris sees a
+boring `sys-telemetryd` daemon it can't confidently kill (and killing it is a tamper
+event the dead-man's switch catches). **Installs in MONITOR mode by default** (detect +
+alert, no kill); pass `--enforce` to arm it. Pick a DIFFERENT name per customer so the
+disguise isn't itself a signature. It de-brands:
 - **process** → generic `process.title` (ps/top show `sys-telemetryd`, not `node sentinel-agent.mjs`)
 - **service** → `<name>.service` ("System telemetry agent"), `Restart=always` (respawns if killed)
 - **files** → `/usr/local/lib/<name>/{agentd,core,rules}`, env `/etc/<name>.env`, incidents `/var/lib/<name>/`
@@ -86,6 +88,20 @@ recon (the running process is renamed but the package isn't; the config dir is r
 Also: env var names in `/proc/<pid>/environ` (`ANTHROPIC_API_KEY` reveals LLM use), and
 outbound to `youraris.com` / `api.anthropic.com`. These defeat *casual* recon today; the
 deeper layer is v2.
+
+## Uninstall
+`sudo ./uninstall.sh [name]` fully removes the agent — stops and deletes the service,
+shreds the env/secrets, removes the files and incident store, and re-enables the Falco
+services the installer disabled. One command, complete; the Falco *package* is left
+installed (`apt-get remove --purge falco` to drop that too).
+
+## Pilot posture (start here with a design partner)
+1. Install **without** `--enforce` → MONITOR mode: Aris watches and alerts, never touches
+   a process. Let it run for a week; review what it flags.
+2. Confirm zero false positives on that box, then reinstall with `--enforce` to arm.
+3. For a fully-local trial, omit `ANTHROPIC_API_KEY` + `ARIS_CLOUD_URL` — nothing leaves
+   the box (tier-1 only). See [DATA-HANDLING.md](DATA-HANDLING.md) for exactly what is
+   sent off-box and how to control it.
 
 ## Safety
 The agent never kills pid ≤ 1, its own ancestors, or a protected comm allowlist

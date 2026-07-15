@@ -10,7 +10,9 @@
     "tier2:smoke": "bun run test/tier2.ts --smoke",
     "tier2": "bun run test/tier2.ts",
     "pipeline:stub": "bun run test/pipeline.ts --stub",
-    "pipeline": "bun run test/pipeline.ts"
+    "pipeline": "bun run test/pipeline.ts",
+    "windows": "bun run test/windows.ts",
+    "win:mock": "node agent/win/sentinel-agent-win.mjs --mock"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.111.0"

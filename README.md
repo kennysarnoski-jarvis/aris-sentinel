@@ -39,6 +39,7 @@ The universal core, testable without a kernel or a customer box — the full two
 | `bun run pipeline:stub` | routing: `escalate`→tier-2, `block`/`clear` stay local | no |
 | `bun run tier2` | tier-2 catches the 3 tier-1 misses; benign/terse stay not-agentic | **yes** |
 | `bun run pipeline` | **18/18 e2e**: attacks blocked, all 12 benign ALLOWED (7 at tier-1, 5 adjudged not-agentic at tier-2) | **yes** |
+| `bun run windows` | **5/5**: the SAME detector catches JadePuffer-style narrated **PowerShell** (AD recon, PtH, exfil) with zero changes; benign admin + terse cradle stay clear | no |
 
 Key-needed tests read `ANTHROPIC_API_KEY` from the env and write results to `test/*-results.md` (gitignored) — read the file rather than pasting attack-payload output around. `tier2:smoke` runs one cheap Haiku call to confirm the key before the full run.
 
@@ -64,7 +65,18 @@ stopping the attacker's AI at its first narrated action, before the destructive 
 (`attacker_impact.py`) is SIGKILLed at exec (`SENTINEL KILL tier-1 score=0.78`) and its
 destructive step never runs, while a benign job is untouched. See [agent/DEPLOY.md](agent/DEPLOY.md).
 
+## Windows (JadePuffer's real environment)
+
+JadePuffer lives on Windows — PowerShell, WMI, AD, pass-the-hash. Since Aris scores the
+attacker's *narration*, not the OS, the **same `decide()` brain catches narrated PowerShell
+unchanged** (proven: `bun run windows`, 5/5). `agent/win/` ports the plumbing: `sensor.ps1`
+tails PowerShell Script Block Logging (Event ID 4104 — Windows auto-deobfuscates it) and
+feeds `sentinel-agent-win.mjs`, which kills via `taskkill`. The event→decide→respond loop
+is validated with `npm run win:mock`; the live event-log read + kill need a Windows host.
+See [agent/win/WINDOWS.md](agent/win/WINDOWS.md).
+
 ## Not built yet (next)
 
 The Aris-cloud escalation transport (KG enrichment), the deploy-time sink-mapper, sink
-scoping + tier-2 rate control for busy hosts, session-level kill, and Go agent packaging.
+scoping + tier-2 rate control for busy hosts, session-level kill, live Windows-host
+validation, and Go agent packaging.

@@ -1,15 +1,15 @@
 // Tier-2 generalization test — does the Aris LLM adjudication catch the
 // novel-style agentic attacks that the tier-1 regexes only "escalated"?
 //
-// Requires: `bun add @anthropic-ai/sdk` and ANTHROPIC_API_KEY in the env.
+// Requires: KIMI_API_KEY (default judge) or ANTHROPIC_API_KEY (fallback) in the env.
 // Costs a few cents (a handful of LLM calls).
 //
 // Results are written to disk (test/tier2-results.json + .md) AS THEY RUN, so a
 // partial run still leaves a readable artifact — and so the findings can be read
 // from a file instead of pasted into a chat that chokes on attack-payload text.
 //
-//   bun run test/tier2.ts --smoke   # 1 Haiku call, confirms plumbing only (cheap)
-//   bun run test/tier2.ts           # full 5 Opus calls, writes the real proof
+//   bun run test/tier2.ts --smoke   # 1 call, confirms plumbing only (cheap)
+//   bun run test/tier2.ts           # full 5 calls, writes the real proof
 
 import { writeFileSync } from "node:fs";
 import { adjudicate } from "../detector/adjudicate";
@@ -61,6 +61,9 @@ aws s3 cp /backups/db.sql.gz s3://acme-backups/`,
 const SMOKE = process.argv.includes("--smoke");
 // Cheap plumbing check on Haiku: valid key? JSON parses? no empty-block bug?
 const SMOKE_MODEL = "claude-haiku-4-5-20251001";
+// Label the run by the judge that will actually answer — mirrors the provider
+// chain in detector/adjudicate.ts (Kimi K3 default, Anthropic opt-in fallback).
+const JUDGE = process.env.KIMI_API_KEY ? "Kimi K3" : process.env.ANTHROPIC_API_KEY ? "claude-opus-4-8" : "NO-PROVIDER (fail-closed)";
 
 interface Row {
   name: string;
@@ -80,14 +83,14 @@ function flush(rows: Row[], done: boolean) {
   writeFileSync(
     JSON_PATH,
     JSON.stringify(
-      { mode: SMOKE ? "smoke" : "full", model: SMOKE ? SMOKE_MODEL : "claude-opus-4-8", done, correct, total: scored.length, rows },
+      { mode: SMOKE ? "smoke" : "full", model: SMOKE ? SMOKE_MODEL : JUDGE, done, correct, total: scored.length, rows },
       null,
       2,
     ),
   );
 
   const lines: string[] = [];
-  lines.push(`# Tier-2 adjudication results (${SMOKE ? "SMOKE / Haiku" : "FULL / Opus"})`);
+  lines.push(`# Tier-2 adjudication results (${SMOKE ? "SMOKE" : "FULL"} / ${JUDGE})`);
   lines.push("");
   const refused = rows.filter((r) => r.tier2?.refused).length;
   const genuine = scored.filter((r) => !r.tier2?.refused && r.correct).length;
@@ -127,7 +130,7 @@ function flush(rows: Row[], done: boolean) {
 const cases = SMOKE ? CASES.slice(0, 1) : CASES;
 const rows: Row[] = [];
 
-console.log(`\n  TIER-2 ADJUDICATION  (${SMOKE ? "SMOKE: 1 Haiku call" : "FULL: 5 Opus calls"})`);
+console.log(`\n  TIER-2 ADJUDICATION  (${SMOKE ? "SMOKE: 1 call" : "FULL: 5 calls"} / ${JUDGE})`);
 console.log(`  writing -> ${JSON_PATH}\n`);
 
 for (const c of cases) {
@@ -164,6 +167,6 @@ if (SMOKE) {
   console.log(
     ok
       ? "  SMOKE PASSED = key valid, JSON parses, real verdict returned. Now run without --smoke.\n"
-      : `  SMOKE FAILED = no real verdict (${why?.error ?? why?.tier2?.reasoning ?? "unknown"}). Check ANTHROPIC_API_KEY before the Opus run.\n`,
+      : `  SMOKE FAILED = no real verdict (${why?.error ?? why?.tier2?.reasoning ?? "unknown"}). Check KIMI_API_KEY (or ANTHROPIC_API_KEY) before the full run.\n`,
   );
 }

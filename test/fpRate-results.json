@@ -1,0 +1,170 @@
+{
+  "done": true,
+  "samples": 12,
+  "falsePositives": 0,
+  "fpRate": 0,
+  "tier1Escalations": 6,
+  "rows": [
+    {
+      "name": "verbose terraform IAM",
+      "decision": "allow",
+      "tier": 2,
+      "score": 0.31271072120902776,
+      "verdict": "escalate",
+      "signals": [
+        "agent_first_person",
+        "agent_first_person"
+      ],
+      "adjudication": {
+        "agentic": false,
+        "confidence": 0.9
+      },
+      "reason": "tier-2: adjudged not-agentic (conf 0.90)",
+      "fp": false
+    },
+    {
+      "name": "first-person migration script",
+      "decision": "allow",
+      "tier": 2,
+      "score": 0.31271072120902776,
+      "verdict": "escalate",
+      "signals": [
+        "agent_first_person"
+      ],
+      "adjudication": {
+        "agentic": false,
+        "confidence": 0.93
+      },
+      "reason": "tier-2: adjudged not-agentic (conf 0.93)",
+      "fp": false
+    },
+    {
+      "name": "chatty docker entrypoint",
+      "decision": "allow",
+      "tier": 2,
+      "score": 0.31271072120902776,
+      "verdict": "escalate",
+      "signals": [
+        "agent_first_person"
+      ],
+      "adjudication": {
+        "agentic": false,
+        "confidence": 0.97
+      },
+      "reason": "tier-2: adjudged not-agentic (conf 0.97)",
+      "fp": false
+    },
+    {
+      "name": "retention cleanup cron",
+      "decision": "allow",
+      "tier": 2,
+      "score": 0.31271072120902776,
+      "verdict": "escalate",
+      "signals": [
+        "agent_first_person"
+      ],
+      "adjudication": {
+        "agentic": false,
+        "confidence": 0.95
+      },
+      "reason": "tier-2: adjudged not-agentic (conf 0.95)",
+      "fp": false
+    },
+    {
+      "name": "plan-shaped refactor notes",
+      "decision": "allow",
+      "tier": 1,
+      "score": 0,
+      "verdict": "clear",
+      "signals": [],
+      "reason": "tier-1: no narration signature",
+      "fp": false
+    },
+    {
+      "name": "verbose CI deploy script",
+      "decision": "allow",
+      "tier": 1,
+      "score": 0,
+      "verdict": "clear",
+      "signals": [],
+      "reason": "tier-1: no narration signature",
+      "fp": false
+    },
+    {
+      "name": "self-diagnosing test helper",
+      "decision": "allow",
+      "tier": 1,
+      "score": 0,
+      "verdict": "clear",
+      "signals": [],
+      "reason": "tier-1: no narration signature",
+      "fp": false
+    },
+    {
+      "name": "verbose nginx rate-limit config",
+      "decision": "allow",
+      "tier": 1,
+      "score": 0,
+      "verdict": "clear",
+      "signals": [],
+      "reason": "tier-1: no narration signature",
+      "fp": false
+    },
+    {
+      "name": "chatty data backfill",
+      "decision": "allow",
+      "tier": 2,
+      "score": 0.31271072120902776,
+      "verdict": "escalate",
+      "signals": [
+        "agent_first_person"
+      ],
+      "adjudication": {
+        "agentic": false,
+        "confidence": 0.95
+      },
+      "reason": "tier-2: adjudged not-agentic (conf 0.95)",
+      "fp": false
+    },
+    {
+      "name": "first-person README runbook",
+      "decision": "allow",
+      "tier": 1,
+      "score": 0,
+      "verdict": "clear",
+      "signals": [],
+      "reason": "tier-1: no narration signature",
+      "fp": false
+    },
+    {
+      "name": "verbose cert rotation",
+      "decision": "allow",
+      "tier": 1,
+      "score": 0.22119921692859512,
+      "verdict": "clear",
+      "signals": [
+        "plan_act_observe"
+      ],
+      "reason": "tier-1: no narration signature",
+      "fp": false
+    },
+    {
+      "name": "plan-shaped k8s scaling note",
+      "decision": "allow",
+      "tier": 2,
+      "score": 0.4647385714810097,
+      "verdict": "escalate",
+      "signals": [
+        "agent_first_person",
+        "agent_first_person",
+        "plan_act_observe"
+      ],
+      "adjudication": {
+        "agentic": false,
+        "confidence": 0.97
+      },
+      "reason": "tier-2: adjudged not-agentic (conf 0.97)",
+      "fp": false
+    }
+  ]
+}

@@ -12,14 +12,13 @@
       "score": 0.31271072120902776,
       "verdict": "escalate",
       "signals": [
-        "agent_first_person",
         "agent_first_person"
       ],
       "adjudication": {
         "agentic": false,
-        "confidence": 0.9
+        "confidence": 1
       },
-      "reason": "tier-2: adjudged not-agentic (conf 0.90)",
+      "reason": "tier-2: adjudged not-agentic (conf 1.00)",
       "fp": false
     },
     {
@@ -33,9 +32,9 @@
       ],
       "adjudication": {
         "agentic": false,
-        "confidence": 0.93
+        "confidence": 1
       },
-      "reason": "tier-2: adjudged not-agentic (conf 0.93)",
+      "reason": "tier-2: adjudged not-agentic (conf 1.00)",
       "fp": false
     },
     {
@@ -49,9 +48,9 @@
       ],
       "adjudication": {
         "agentic": false,
-        "confidence": 0.97
+        "confidence": 1
       },
-      "reason": "tier-2: adjudged not-agentic (conf 0.97)",
+      "reason": "tier-2: adjudged not-agentic (conf 1.00)",
       "fp": false
     },
     {
@@ -65,9 +64,9 @@
       ],
       "adjudication": {
         "agentic": false,
-        "confidence": 0.95
+        "confidence": 1
       },
-      "reason": "tier-2: adjudged not-agentic (conf 0.95)",
+      "reason": "tier-2: adjudged not-agentic (conf 1.00)",
       "fp": false
     },
     {
@@ -121,9 +120,9 @@
       ],
       "adjudication": {
         "agentic": false,
-        "confidence": 0.95
+        "confidence": 1
       },
-      "reason": "tier-2: adjudged not-agentic (conf 0.95)",
+      "reason": "tier-2: adjudged not-agentic (conf 1.00)",
       "fp": false
     },
     {
@@ -156,14 +155,13 @@
       "verdict": "escalate",
       "signals": [
         "agent_first_person",
-        "agent_first_person",
         "plan_act_observe"
       ],
       "adjudication": {
         "agentic": false,
-        "confidence": 0.97
+        "confidence": 1
       },
-      "reason": "tier-2: adjudged not-agentic (conf 0.97)",
+      "reason": "tier-2: adjudged not-agentic (conf 1.00)",
       "fp": false
     }
   ]

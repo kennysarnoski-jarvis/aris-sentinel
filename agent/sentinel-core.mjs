@@ -232,12 +232,18 @@ export function inspect(raw) {
 //              real-time cyber classifier can decline a request about attack-shaped text
 //              (that is what refused 6/6 BENIGN escalations in July 2026), so the leg asks
 //              for server-side fallbacks (`fallbacks: "default"`: a cyber-category decline
-//              is re-run on the model Anthropic recommends, inside the same call) and
-//              retries once with the de-fanged SYSTEM_AUTHORSHIP prompt.
+//              is re-run on the model Anthropic recommends, inside the same call).
 //   openai     OPENAI_API_KEY (+ OPENAI_MODEL) against api.openai.com or any remote
 //              OpenAI-compatible endpoint (OPENAI_BASE_URL).
 //   kimi       KIMI_API_KEY -> Kimi K3 at api.kimi.com/coding (Anthropic wire, Bearer).
 // ARIS_TIER2_ORDER=local,anthropic,openai,kimi (the default) reorders the chain.
+//
+// Every leg asks with SYSTEM_AUTHORSHIP first: it requires BOTH AI authorship AND
+// malicious intent, with an explicit carve-out for AI-assisted legitimate code. The
+// 2026-11-07 matrix on a local qwen2.5:14b showed why: with the original SYSTEM prompt
+// it convicted plan-shaped benign notes ("narrates its intent and steps", conf 1.00),
+// 6/8; with SYSTEM_AUTHORSHIP 8/8 with both attack controls still convicted. The
+// original SYSTEM is the retry on the two-attempt legs.
 //
 // A refusal, timeout, HTTP error or malformed reply is a failed attempt; the chain moves
 // on, and when nobody answers the verdict fails CLOSED (refused: true). That stays the
@@ -347,7 +353,7 @@ export function providers(env = process.env) {
       model,
       effort: EFFORTS.has(env.ARIS_TIER2_EFFORT) ? env.ARIS_TIER2_EFFORT : undefined,
       fallbacks: env.ARIS_TIER2_FALLBACKS !== "0" && fallbackCapable(model),
-      attempts: [{ system: SYSTEM }, { system: SYSTEM_AUTHORSHIP }],
+      attempts: [{ system: SYSTEM_AUTHORSHIP }, { system: SYSTEM }],
     };
   }
   if ((env.OPENAI_API_KEY || env.OPENAI_BASE_URL) && env.OPENAI_MODEL) {
@@ -359,7 +365,7 @@ export function providers(env = process.env) {
       url: base + "/chat/completions",
       headers: env.OPENAI_API_KEY ? { authorization: `Bearer ${env.OPENAI_API_KEY}` } : {},
       model: env.OPENAI_MODEL,
-      attempts: [{ system: SYSTEM }, { system: SYSTEM_AUTHORSHIP }],
+      attempts: [{ system: SYSTEM_AUTHORSHIP }, { system: SYSTEM }],
     };
   }
   if (env.KIMI_API_KEY) {
@@ -369,7 +375,7 @@ export function providers(env = process.env) {
       url: (env.KIMI_BASE_URL || KIMI_URL).replace(/\/$/, "") + "/v1/messages",
       headers: { authorization: `Bearer ${env.KIMI_API_KEY}` },
       model: env.KIMI_MODEL || KIMI_MODEL,
-      attempts: [{ system: SYSTEM }],
+      attempts: [{ system: SYSTEM_AUTHORSHIP }],
     };
   }
   const order = env.ARIS_TIER2_ORDER ? env.ARIS_TIER2_ORDER.split(",").map((x) => x.trim()).filter(Boolean) : DEFAULT_ORDER;

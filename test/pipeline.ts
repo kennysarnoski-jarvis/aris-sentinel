@@ -97,6 +97,19 @@ const BENIGN_CASES: Case[] = readdirSync(BENIGN_DIR)
     note: "specificity through pipeline: must ALLOW (tier-1 clear, or tier-2 not-agentic)",
   }));
 
+// Every corpus positive through the full pipeline, real mode only: the ones tier 1
+// only ESCALATES are exactly the ones tier 2 exists for, and until this ran, no harness
+// had ever put them in front of a judge. Expect BLOCK (tier 1 or tier 2).
+const POS_DIR = new URL("../corpus/positives/", import.meta.url).pathname;
+const POSITIVE_CASES: Case[] = readdirSync(POS_DIR)
+  .sort()
+  .map((f) => ({
+    name: `positives/${f}`,
+    text: readFileSync(POS_DIR + f, "utf8"),
+    expect: { decision: "block" as const },
+    note: "agentic through pipeline: must BLOCK (tier-1 block, or tier-2 agentic)",
+  }));
+
 // Stub adjudicator: deterministic, no network. Proves ROUTING — that `escalate`
 // reaches tier 2 and `block`/`clear` never do. Returns agentic=true so the escalate
 // cases resolve to block, and counts calls so we can assert the fast paths stayed local.
@@ -140,6 +153,17 @@ function flush(rows: Row[], done: boolean) {
   }
   lines.push("");
   if (!STUB) {
+    const pos = rows.filter((r) => r.name.startsWith("positives/") && r.got);
+    if (pos.length) {
+      const t2 = pos.filter((r) => r.got!.tier === 2).length;
+      const blocked = pos.filter((r) => r.got!.decision === "block").length;
+      const byJudge = pos.filter((r) => r.got!.tier === 2 && r.got!.decision === "block").length;
+      lines.push(
+        `**Recall through both tiers:** ${blocked}/${pos.length} agentic files BLOCKED ` +
+          `(${pos.length - t2} at tier-1, ${byJudge} convicted by tier-2, ${t2 - byJudge} escalated and MISSED by the judge).`,
+      );
+      lines.push("");
+    }
     const benign = rows.filter((r) => r.name.startsWith("benign/") && r.got);
     if (benign.length) {
       const t2 = benign.filter((r) => r.got!.tier === 2).length;
@@ -168,7 +192,7 @@ console.log(`  writing -> ${MD_PATH}\n`);
 
 // Stub proves routing on the curated attack set only (a stub can't judge benign vs
 // agentic). Real mode adds the full benign corpus for specificity through both tiers.
-const cases = STUB ? CASES : [...CASES, ...BENIGN_CASES];
+const cases = STUB ? CASES : [...CASES, ...POSITIVE_CASES, ...BENIGN_CASES];
 
 const rows: Row[] = [];
 for (const c of cases) {
@@ -198,10 +222,16 @@ if (STUB) {
   const routingOk = stubCalls === 3;
   console.log(`  tier-2 calls: ${stubCalls}/3 escalate-band only  -> routing ${routingOk ? "CORRECT" : "WRONG"}\n`);
 } else {
+  const pos = rows.filter((r) => r.name.startsWith("positives/") && r.got);
+  if (pos.length) {
+    const t2 = pos.filter((r) => r.got!.tier === 2).length;
+    const blocked = pos.filter((r) => r.got!.decision === "block").length;
+    console.log(`  agentic recall: ${blocked}/${pos.length} BLOCKED  (${pos.length - t2} at tier-1, ${t2} judged at tier-2)`);
+  }
   const benign = rows.filter((r) => r.name.startsWith("benign/") && r.got);
   const t1 = benign.filter((r) => r.got!.tier === 1).length;
   const t2 = benign.filter((r) => r.got!.tier === 2).length;
   const allowed = benign.filter((r) => r.got!.decision === "allow").length;
   console.log(`  benign specificity: ${allowed}/${benign.length} ALLOWED  (${t1} cleared at tier-1, ${t2} adjudged not-agentic at tier-2)`);
-  console.log(`  tier-2 LLM calls this run: ${t2} benign + 3 novel attacks = ${t2 + 3}\n`);
+  console.log(`  tier-2 LLM calls this run: ${t2} benign + ${pos.filter((r) => r.got!.tier === 2).length} positives + 3 novel attacks\n`);
 }

@@ -37,7 +37,11 @@ signals as before the refactor (`test/corpus-snapshot.json`).
   Opus 5.5 with server-side fallbacks + a de-fanged-prompt retry, and an OpenAI-wire leg
   was added so a local model (Ollama/vLLM) can judge with nothing leaving the box. Chain
   order is `ARIS_TIER2_ORDER` (default `local,anthropic,openai,kimi`). Fail-closed policy
-  unchanged. None of the key-needed suites have been run on the new chain yet.
+  unchanged.
+- **Later still:** the key-needed suites ran live on a local qwen2.5:14b (Ollama): pipeline
+  74/74, fpRate 0/12, tier2 5/5, matrix 8/8 with the two-criteria prompt, which now leads
+  on every leg (see corpus/README.md). Hosted judges (Claude, Kimi) still unmeasured on
+  the new chain.
 - MONITOR is still the default; `alert` and `error` never kill, even in `--enforce`.
 
 ## Not done here

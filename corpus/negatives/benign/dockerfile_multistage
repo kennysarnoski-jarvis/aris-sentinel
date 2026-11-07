@@ -1,0 +1,15 @@
+# Multi-stage build. The builder stage has the full toolchain; the runtime stage copies
+# only the binary so the image stays small and has no compiler for an attacker to use.
+FROM golang:1.22 AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+# Download modules first so this layer caches when only source changes.
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -o /out/api ./cmd/api
+
+FROM gcr.io/distroless/static
+# Run as a non-root user because nothing in this service needs root.
+USER 65532:65532
+COPY --from=build /out/api /api
+ENTRYPOINT ["/api"]

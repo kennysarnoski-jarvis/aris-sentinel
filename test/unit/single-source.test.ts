@@ -9,13 +9,16 @@ import { fileURLToPath } from "node:url";
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const CORE = "agent/sentinel-core.mjs";
 const SELF = "test/unit/single-source.test.ts";
-const SKIP_DIRS = new Set(["node_modules", ".git", "corpus"]);
+// Hidden dirs are skipped too: the desktop app keeps other sessions' git worktrees under
+// .claude/, and a second checkout of the repo is not a second copy of the detector.
+const SKIP_DIRS = new Set(["node_modules", "corpus"]);
+const skip = (name: string) => SKIP_DIRS.has(name) || name.startsWith(".");
 
 function* walk(dir: string): Generator<string> {
   for (const e of readdirSync(dir)) {
     const p = join(dir, e);
     if (statSync(p).isDirectory()) {
-      if (!SKIP_DIRS.has(e)) yield* walk(p);
+      if (!skip(e)) yield* walk(p);
     } else if (/\.(ts|mts|mjs|js|py|ps1|sh)$/.test(e)) yield p;
   }
 }

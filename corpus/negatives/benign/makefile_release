@@ -1,0 +1,16 @@
+# Release targets. `make release` tags, builds and pushes; each step verifies the previous
+# one so a half-done release cannot happen silently.
+VERSION ?= $(shell git describe --tags --abbrev=0)
+
+.PHONY: test build tag push release
+test:
+	go test ./...
+build: test
+	docker build -t registry/app:$(VERSION) .
+tag: build
+	git tag -a $(VERSION) -m "release $(VERSION)"
+push: tag
+	docker push registry/app:$(VERSION)
+	git push origin $(VERSION)
+release: push
+	@echo "released $(VERSION)"

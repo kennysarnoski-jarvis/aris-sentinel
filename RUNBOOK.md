@@ -29,23 +29,21 @@ sleep 60 && sudo docker logs --tail 15 langflow   # wait for boot
 ```
 `127.0.0.1:7860` = reachable only from the box itself, never the internet.
 
-## 3. Get the two Sentinel demo files onto the box
-Either scp from your Mac (needs your Lightsail `.pem` key):
+## 3. Get Sentinel onto the box
+The demo imports the one canonical detector (`agent/sentinel-core.mjs`), so keep the repo
+layout — clone it (no install step; zero dependencies):
 ```bash
-scp -i <LightsailKey>.pem \
-  ~/Projects/aris-sentinel/interposition/sentinel-langflow-demo.mjs \
-  ~/Projects/aris-sentinel/attack/attack.py \
-  ubuntu@<box-public-ip>:~/
+git clone https://github.com/kennysarnoski-jarvis/aris-sentinel.git && cd aris-sentinel
 ```
-…or `git clone` the repo if you've pushed it.
 
 ## 4. Start the Sentinel interposition (leave running)
 Node **>=18** required (global `fetch`). To enable **tier 2** (the LLM adjudication
-that catches the stealth payload tier-1 only escalates), export your key first —
-without it the demo runs tier-1 only and still blocks the narrated payload:
+that catches the stealth payload tier-1 only escalates), export a key first — without
+it the demo runs tier-1 only: it still blocks the narrated payload and **alerts** (logs,
+then forwards) the stealth one:
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...   # optional; enables tier 2
-node sentinel-langflow-demo.mjs       # listens :8000  ->  Langflow 127.0.0.1:7860
+export KIMI_API_KEY=sk-kimi-...                    # optional; enables tier 2 (or ANTHROPIC_API_KEY)
+node interposition/sentinel-langflow-demo.mjs      # listens :8000  ->  Langflow 127.0.0.1:7860
 ```
 The startup line reports whether tier 2 is ENABLED or disabled. Open a SECOND SSH
 session for the attack.
@@ -53,8 +51,8 @@ session for the attack.
 ## 5. Fire the attack — the money moment
 ```bash
 # (a) DIRECT at Langflow, no Sentinel -> the RCE fires
-python3 attack.py http://127.0.0.1:7860                        # narrated payload
-python3 attack.py http://127.0.0.1:7860 stealth                # stealth payload
+python3 attack/attack.py http://127.0.0.1:7860                 # narrated payload
+python3 attack/attack.py http://127.0.0.1:7860 stealth         # stealth payload
 sudo docker exec langflow cat /tmp/SENTINEL_DEMO_RCE_PROOF          # EXISTS = narrated ran
 sudo docker exec langflow cat /tmp/SENTINEL_DEMO_RCE_PROOF_STEALTH  # EXISTS = stealth ran
 
@@ -62,8 +60,8 @@ sudo docker exec langflow cat /tmp/SENTINEL_DEMO_RCE_PROOF_STEALTH  # EXISTS = s
 sudo docker exec langflow rm -f /tmp/SENTINEL_DEMO_RCE_PROOF /tmp/SENTINEL_DEMO_RCE_PROOF_STEALTH
 
 # (b) THROUGH Sentinel -> blocked before Langflow ever sees it
-python3 attack.py http://127.0.0.1:8000                        # narrated -> HTTP 403 (TIER 1)
-python3 attack.py http://127.0.0.1:8000 stealth                # stealth  -> HTTP 403 (TIER 2)
+python3 attack/attack.py http://127.0.0.1:8000                 # narrated -> HTTP 403 (TIER 1)
+python3 attack/attack.py http://127.0.0.1:8000 stealth         # stealth  -> HTTP 403 (TIER 2)
 sudo docker exec langflow cat /tmp/SENTINEL_DEMO_RCE_PROOF          # NO file = never reached exec()
 sudo docker exec langflow cat /tmp/SENTINEL_DEMO_RCE_PROOF_STEALTH  # NO file = never reached exec()
 ```
@@ -75,8 +73,8 @@ sudo docker exec langflow cat /tmp/SENTINEL_DEMO_RCE_PROOF_STEALTH  # NO file = 
     — the fast local filter caught heavy narration, zero LLM cost.
   - stealth → `SENTINEL BLOCK  tier-2 … tier1=0.31(escalate)  adjudged AGENTIC` + a reasoning line
     — tier-1 alone only escalated it; **the LLM adjudication caught what a signature-only
-    detector would miss.** (With no `ANTHROPIC_API_KEY`, tier-2 is off and the stealth payload
-    passes — that's the honest tier-1-only limit the key closes.)
+    detector would miss.** (With no key, tier-2 is off: the stealth payload is logged as
+    `SENTINEL ALERT` and forwarded — the honest tier-1-only limit the key closes.)
 
 ## 6. Teardown
 `sudo docker rm -f langflow`, then stop/snapshot/delete the Lightsail instance.

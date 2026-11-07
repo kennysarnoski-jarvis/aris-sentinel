@@ -8,9 +8,13 @@
 # NB: loaded with `-r`, which OVERRIDES Falco's default rules_files — so the
 # condition must be SELF-CONTAINED (no `spawned_process` macro, which lives in the
 # default falco_rules.yaml and would be undefined here).
+#
+# %proc.cwd is REQUIRED: the agent resolves a relative script path (`python3 job.py`)
+# against the process's own cwd, never its own. Existing installs must re-run
+# install.sh (it re-copies this file) to pick that up.
 - rule: aris_exec_capture
   desc: Emit every process exec for Aris Sentinel scoring
   condition: (evt.type in (execve, execveat) and evt.dir=<)
-  output: "aris_exec pid=%proc.pid ppid=%proc.ppid sid=%proc.sid user=%user.name exe=%proc.exe pname=%proc.pname cmdline=%proc.cmdline"
+  output: "aris_exec pid=%proc.pid ppid=%proc.ppid sid=%proc.sid user=%user.name exe=%proc.exe pname=%proc.pname cwd=%proc.cwd cmdline=%proc.cmdline"
   priority: INFORMATIONAL
   tags: [aris]

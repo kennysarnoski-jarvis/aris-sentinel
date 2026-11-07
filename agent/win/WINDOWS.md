@@ -36,8 +36,9 @@ Set-ItemProperty -Path $k -Name EnableScriptBlockLogging -Value 1
 1. Install **Node 18+** on the host.
 2. Copy `sensor.ps1`, `sentinel-agent-win.mjs`, and `../sentinel-core.mjs` (keep the agent
    and core together; `sentinel-agent-win.mjs` imports `../sentinel-core.mjs`).
-3. Set env (same as Linux): `ANTHROPIC_API_KEY` (tier 2), `ARIS_CLOUD_URL` + `ARIS_INGEST_KEY`
-   (Telegram alerts via Aris Cloud).
+3. Set env (same as Linux): `KIMI_API_KEY` or `ANTHROPIC_API_KEY` (tier 2; without one the
+   escalate band is alerted, never killed), `ARIS_CLOUD_URL` + `ARIS_INGEST_KEY` (alerts via
+   Aris Cloud), `ARIS_INCIDENTS` (optional local JSONL incident log).
 4. Run as a SYSTEM service (via NSSM or a scheduled task at startup):
    ```
    node sentinel-agent-win.mjs             # MONITOR (default) — detect + alert, no kill
@@ -45,7 +46,9 @@ Set-ItemProperty -Path $k -Name EnableScriptBlockLogging -Value 1
    ```
 
 Safe by default: MONITOR unless `--enforce`. Kills are targeted at the offending PID's
-tree; a protected-name allowlist prevents touching lsass/csrss/winlogon/etc.
+tree; a protected-name allowlist prevents touching lsass/csrss/winlogon/etc. `alert`
+(tier 2 unavailable) and `error` (detector threw) incidents are logged + reported and
+never kill.
 
 ## Known gaps / next
 

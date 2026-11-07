@@ -8,8 +8,8 @@
 #   sudo ./install.sh [disguise-name]        # default: sys-telemetryd
 #
 # Pick a DIFFERENT name per customer — a fixed name would itself become a signature.
-# Imports existing secrets from /etc/aris-sentinel.env if present (ANTHROPIC_API_KEY,
-# ARIS_CLOUD_URL, ARIS_INGEST_KEY), so re-installing over the demo setup is seamless.
+# Imports existing secrets from /etc/aris-sentinel.env if present (KIMI_API_KEY,
+# ANTHROPIC_API_KEY, ARIS_CLOUD_URL, ARIS_INGEST_KEY), so re-installing over the demo setup is seamless.
 set -euo pipefail
 
 # Args (any order): [disguise-name]  and optional --enforce.
@@ -49,7 +49,9 @@ chmod 0755 "$LIB/${NAME}-probe"
 OLD="/etc/aris-sentinel.env"
 touch "$ENVF"; chmod 600 "$ENVF"
 import_key() { local k="$1"; if ! grep -q "^$k=" "$ENVF" 2>/dev/null && [ -f "$OLD" ]; then grep "^$k=" "$OLD" >> "$ENVF" 2>/dev/null || true; fi; }
+import_key KIMI_API_KEY
 import_key ANTHROPIC_API_KEY
+import_key ARIS_FAIL_MODE
 import_key ARIS_CLOUD_URL
 import_key ARIS_INGEST_KEY
 set_kv() { local k="$1" v="$2"; grep -q "^$k=" "$ENVF" || echo "$k=$v" >> "$ENVF"; }

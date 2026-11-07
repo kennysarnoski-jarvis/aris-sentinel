@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "types": ["node", "bun-types"]
+  },
+  "include": ["detector/**/*.ts", "test/**/*.ts", "agent/sentinel-core.d.mts"]
+}

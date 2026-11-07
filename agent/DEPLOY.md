@@ -27,11 +27,16 @@ sentinel-core.mjs  sentinel-agent.mjs  aris_rules.yaml
 ## 3. (optional) Enable tier 2
 Tier 1 (local regex filter) blocks heavily-narrated payloads with zero LLM cost.
 Tier 2 (LLM adjudication) catches the *stealthier* narration tier-1 only escalates.
-Put the key in a root-only env file — never in the unit or process args:
+Without a key the escalate band is **alerted** (logged + reported, never killed), not
+silently allowed. Put the key in a root-only env file — never in the unit or process args:
 ```bash
-printf 'ANTHROPIC_API_KEY=%s\n' 'sk-ant-...' | sudo tee /etc/aris-sentinel.env >/dev/null
+# Kimi K3 is tried first (default judge); ANTHROPIC_API_KEY is the fallback. Either works alone.
+printf 'KIMI_API_KEY=%s\n' 'sk-kimi-...' | sudo tee /etc/aris-sentinel.env >/dev/null
 sudo chmod 600 /etc/aris-sentinel.env
 ```
+Tier-2 knobs (all optional, defaults in the README): `ARIS_FAIL_MODE=alert` to page
+instead of block on an adjudicator outage; `ARIS_TIER2_TIMEOUT_MS`, `_DEADLINE_MS`,
+`_CACHE_TTL_MS`, `_CONCURRENCY`, `_BUDGET_PER_MIN` for cost and rate control.
 
 ## 4. Arm it
 Run as root (needs eBPF + the ability to kill). As a transient unit:
@@ -44,7 +49,11 @@ Modes — **safe by default**: with no flag the agent runs **MONITOR** (detect +
 never kills). Add `--enforce` to let it kill on detection — do that only once you trust
 it on that box. Sanity-check with no root/Falco: `node sentinel-agent.mjs --selftest`.
 
-Logs: `journalctl -u aris-agent -f`. Incidents: `/var/log/aris-incidents.jsonl`.
+Logs: `journalctl -u aris-agent -f`. Incidents: `/var/log/aris-incidents.jsonl`, one JSON
+row each with `decision` ∈ `block` / `alert` / `error` and `action` ∈ `killed` /
+`monitored` / `spared:<why>` / `alerted` / `errored`. An `alert` is tier 1 saying
+"suspicious" with no tier 2 to confirm it; an `error` is the detector throwing — both
+are reported off-box and neither ever kills.
 
 ## 5. Prove it (the kill demo)
 `attacker_impact.py` narrates a JadePuffer-style impact phase, then "encrypts" after a
@@ -85,8 +94,8 @@ disguise isn't itself a signature. It de-brands:
 **Known remaining tells (need the eBPF-native rewrite to fully close):** Falco is still an
 apt package — `/etc/falco`, `/usr/bin/falco`, `dpkg -l | grep falco` reveal it to *deep*
 recon (the running process is renamed but the package isn't; the config dir is required).
-Also: env var names in `/proc/<pid>/environ` (`ANTHROPIC_API_KEY` reveals LLM use), and
-outbound to `youraris.com` / `api.anthropic.com`. These defeat *casual* recon today; the
+Also: env var names in `/proc/<pid>/environ` (`KIMI_API_KEY` / `ANTHROPIC_API_KEY` reveal LLM use), and
+outbound to `youraris.com` / `api.kimi.com` / `api.anthropic.com`. These defeat *casual* recon today; the
 deeper layer is v2.
 
 ## Uninstall
@@ -99,7 +108,7 @@ installed (`apt-get remove --purge falco` to drop that too).
 1. Install **without** `--enforce` → MONITOR mode: Aris watches and alerts, never touches
    a process. Let it run for a week; review what it flags.
 2. Confirm zero false positives on that box, then reinstall with `--enforce` to arm.
-3. For a fully-local trial, omit `ANTHROPIC_API_KEY` + `ARIS_CLOUD_URL` — nothing leaves
+3. For a fully-local trial, omit the LLM keys + `ARIS_CLOUD_URL` — nothing leaves
    the box (tier-1 only). See [DATA-HANDLING.md](DATA-HANDLING.md) for exactly what is
    sent off-box and how to control it.
 
@@ -109,12 +118,13 @@ The agent never kills pid ≤ 1, its own ancestors, or a protected comm allowlis
 (no shelling out) to avoid exec feedback loops.
 
 ## Known limits / next
-- **Scope**: v1 scores *every* exec's cmdline (+ script-file contents for interpreters).
-  On a busy box that's a lot of scoring; production should scope to sensitive sinks and
-  cap tier-2 escalation volume.
-- **Per-session dedup**: a single attack fans out into several execs (the interpreter +
-  its children), so the same payload can be adjudicated by tier-2 more than once — N LLM
-  calls where 1 would do. Cache verdicts by (session, payload-hash) before escalating.
+- **Scope**: v1 scores *every* exec's cmdline (+ script-file contents for interpreters,
+  resolved against the process's own cwd via Falco's `%proc.cwd`). On a busy box that's
+  a lot of scoring; production should scope to sensitive sinks. Tier-2 volume is already
+  capped by the governor (`ARIS_TIER2_BUDGET_PER_MIN`, cache, concurrency).
+- **Rules file**: `aris_rules.yaml` gained `cwd=%proc.cwd` on 2026-11-07. Existing
+  pilots must re-run `install.sh` (it re-copies the rule) or the agent cannot resolve
+  relative script paths and will score the cmdline alone.
 - **Kill granularity**: kills the offending process tree, not the whole attacker session.
   A `--kill-session` mode (terminate the sid) is the next increment for multi-phase kill.
 - **Detect vs enforce**: Falco observes post-syscall; the "stop before destruction"

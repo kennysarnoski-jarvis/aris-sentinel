@@ -59,7 +59,8 @@ aws s3 cp /backups/db.sql.gz s3://acme-backups/`,
 ];
 
 const SMOKE = process.argv.includes("--smoke");
-// Cheap plumbing check on Haiku: valid key? JSON parses? no empty-block bug?
+// Cheap plumbing check: valid key? JSON parses? real verdict? The model override only
+// applies to the Anthropic leg; with KIMI_API_KEY set the smoke runs on K3 (already cheap).
 const SMOKE_MODEL = "claude-haiku-4-5-20251001";
 // Label the run by the judge that will actually answer — mirrors the provider
 // chain in detector/adjudicate.ts (Kimi K3 default, Anthropic opt-in fallback).

@@ -1,0 +1,349 @@
+{
+ "corpus/positives/agentic_persistence_cron.py": {
+  "score": 0.6753,
+  "verdict": "block",
+  "decoded": false,
+  "signals": [
+   "agent_first_person",
+   "intent_commentary_density",
+   "plan_act_observe"
+  ]
+ },
+ "corpus/positives/agentic_privesc_sudo.py": {
+  "score": 0.7472,
+  "verdict": "block",
+  "decoded": false,
+  "signals": [
+   "agent_first_person",
+   "diagnosis_then_fix",
+   "intent_commentary_density",
+   "plan_act_observe"
+  ]
+ },
+ "corpus/positives/agentic_s3_exfil.py": {
+  "score": 0.8262,
+  "verdict": "block",
+  "decoded": false,
+  "signals": [
+   "agent_first_person",
+   "exfil_ransom_narration",
+   "intent_commentary_density",
+   "plan_act_observe",
+   "roi_target_prioritization"
+  ]
+ },
+ "corpus/positives/jadepuffer_impact_db_drop.py": {
+  "score": 0.8262,
+  "verdict": "block",
+  "decoded": false,
+  "signals": [
+   "agent_first_person",
+   "exfil_ransom_narration",
+   "intent_commentary_density",
+   "plan_act_observe",
+   "roi_target_prioritization"
+  ]
+ },
+ "corpus/positives/jadepuffer_lateral_movement.py": {
+  "score": 0.7135,
+  "verdict": "block",
+  "decoded": false,
+  "signals": [
+   "agent_first_person",
+   "intent_commentary_density",
+   "plan_act_observe",
+   "roi_target_prioritization"
+  ]
+ },
+ "corpus/positives/jadepuffer_recon_creds.py": {
+  "score": 0.6753,
+  "verdict": "block",
+  "decoded": false,
+  "signals": [
+   "intent_commentary_density",
+   "plan_act_observe",
+   "roi_target_prioritization"
+  ]
+ },
+ "corpus/positives/jadepuffer_retry_fk_bypass.py": {
+  "score": 0.7472,
+  "verdict": "block",
+  "decoded": false,
+  "signals": [
+   "agent_first_person",
+   "diagnosis_then_fix",
+   "intent_commentary_density",
+   "plan_act_observe"
+  ]
+ },
+ "corpus/negatives/benign/ansible_cis_hardening.yml": {
+  "score": 0.2212,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": [
+   "intent_commentary_density"
+  ]
+ },
+ "corpus/negatives/benign/cost_rightsizing.py": {
+  "score": 0.3127,
+  "verdict": "escalate",
+  "decoded": false,
+  "signals": [
+   "roi_target_prioritization"
+  ]
+ },
+ "corpus/negatives/benign/create_report_table.sql": {
+  "score": 0,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": []
+ },
+ "corpus/negatives/benign/db_migration_0042.py": {
+  "score": 0.2212,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": [
+   "intent_commentary_density"
+  ]
+ },
+ "corpus/negatives/benign/etl_customer_pipeline.py": {
+  "score": 0.3127,
+  "verdict": "escalate",
+  "decoded": false,
+  "signals": [
+   "roi_target_prioritization"
+  ]
+ },
+ "corpus/negatives/benign/feature_rollout_plan.md": {
+  "score": 0.2212,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": [
+   "plan_act_observe"
+  ]
+ },
+ "corpus/negatives/benign/firewall_hardening.sh": {
+  "score": 0.3127,
+  "verdict": "escalate",
+  "decoded": false,
+  "signals": [
+   "intent_commentary_density"
+  ]
+ },
+ "corpus/negatives/benign/github_actions_deploy.yml": {
+  "score": 0.2212,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": [
+   "plan_act_observe"
+  ]
+ },
+ "corpus/negatives/benign/k8s_api_deployment.yaml": {
+  "score": 0.2212,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": [
+   "intent_commentary_density"
+  ]
+ },
+ "corpus/negatives/benign/nightly_backup.sh": {
+  "score": 0,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": []
+ },
+ "corpus/negatives/benign/sre_incident_runbook.md": {
+  "score": 0.4647,
+  "verdict": "escalate",
+  "decoded": false,
+  "signals": [
+   "agent_first_person",
+   "plan_act_observe"
+  ]
+ },
+ "corpus/negatives/benign/terraform_prod_vpc.tf": {
+  "score": 0.3935,
+  "verdict": "escalate",
+  "decoded": false,
+  "signals": [
+   "intent_commentary_density"
+  ]
+ },
+ "corpus/negatives/human-malware/cron_backdoor.sh": {
+  "score": 0,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": []
+ },
+ "corpus/negatives/human-malware/exfil_oneliner.sh": {
+  "score": 0,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": []
+ },
+ "corpus/negatives/human-malware/powershell_downloader.ps1": {
+  "score": 0,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": []
+ },
+ "corpus/negatives/human-malware/python_rshell.py": {
+  "score": 0,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": []
+ },
+ "corpus/negatives/human-malware/reverse_shell.sh": {
+  "score": 0,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": []
+ },
+ "corpus/negatives/human-malware/setuid_dropper.c": {
+  "score": 0,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": []
+ },
+ "corpus/negatives/human-malware/sqli_union_dump.txt": {
+  "score": 0,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": []
+ },
+ "corpus/negatives/human-malware/webshell.php": {
+  "score": 0,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": []
+ },
+ "corpus/windows-powershell/agentic_exfil_stage.ps1": {
+  "score": 0.6321,
+  "verdict": "block",
+  "decoded": false,
+  "signals": [
+   "agent_first_person",
+   "plan_act_observe",
+   "roi_target_prioritization"
+  ]
+ },
+ "corpus/windows-powershell/agentic_lateral_pth.ps1": {
+  "score": 0.6753,
+  "verdict": "block",
+  "decoded": false,
+  "signals": [
+   "agent_first_person",
+   "diagnosis_then_fix",
+   "plan_act_observe"
+  ]
+ },
+ "corpus/windows-powershell/agentic_recon_ad.ps1": {
+  "score": 0.6321,
+  "verdict": "block",
+  "decoded": false,
+  "signals": [
+   "agent_first_person",
+   "plan_act_observe",
+   "roi_target_prioritization"
+  ]
+ },
+ "corpus/windows-powershell/benign_admin_maintenance.ps1": {
+  "score": 0,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": []
+ },
+ "corpus/windows-powershell/terse_malware_cradle.ps1": {
+  "score": 0,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": []
+ },
+ "fpSamples/verbose terraform IAM": {
+  "score": 0.3127,
+  "verdict": "escalate",
+  "decoded": false,
+  "signals": [
+   "agent_first_person"
+  ]
+ },
+ "fpSamples/first-person migration script": {
+  "score": 0.3127,
+  "verdict": "escalate",
+  "decoded": false,
+  "signals": [
+   "agent_first_person"
+  ]
+ },
+ "fpSamples/chatty docker entrypoint": {
+  "score": 0.3127,
+  "verdict": "escalate",
+  "decoded": false,
+  "signals": [
+   "agent_first_person"
+  ]
+ },
+ "fpSamples/retention cleanup cron": {
+  "score": 0.3127,
+  "verdict": "escalate",
+  "decoded": false,
+  "signals": [
+   "agent_first_person"
+  ]
+ },
+ "fpSamples/plan-shaped refactor notes": {
+  "score": 0,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": []
+ },
+ "fpSamples/verbose CI deploy script": {
+  "score": 0,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": []
+ },
+ "fpSamples/self-diagnosing test helper": {
+  "score": 0,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": []
+ },
+ "fpSamples/verbose nginx rate-limit config": {
+  "score": 0,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": []
+ },
+ "fpSamples/chatty data backfill": {
+  "score": 0.3127,
+  "verdict": "escalate",
+  "decoded": false,
+  "signals": [
+   "agent_first_person"
+  ]
+ },
+ "fpSamples/first-person README runbook": {
+  "score": 0,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": []
+ },
+ "fpSamples/verbose cert rotation": {
+  "score": 0.2212,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": [
+   "plan_act_observe"
+  ]
+ },
+ "fpSamples/plan-shaped k8s scaling note": {
+  "score": 0.4647,
+  "verdict": "escalate",
+  "decoded": false,
+  "signals": [
+   "agent_first_person",
+   "plan_act_observe"
+  ]
+ }
+}

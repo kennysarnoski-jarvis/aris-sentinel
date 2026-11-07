@@ -10,25 +10,29 @@
 //   node sentinel-agent-win.mjs --enforce  # kill the offending PowerShell process tree
 //   node sentinel-agent-win.mjs --mock      # replay agent/win/mock-events.jsonl (no Windows)
 //
-//   env: ANTHROPIC_API_KEY (tier 2)  ARIS_CLOUD_URL + ARIS_INGEST_KEY (alerts)
-//        ARIS_SENSOR (path to sensor.ps1)  ARIS_HOST  ARIS_VERBOSE=1
+//   env: KIMI_API_KEY / ANTHROPIC_API_KEY (tier 2)  ARIS_CLOUD_URL + ARIS_INGEST_KEY (alerts)
+//        ARIS_SENSOR (path to sensor.ps1)  ARIS_INCIDENTS (incident log)  ARIS_HOST  ARIS_VERBOSE=1
+//        ARIS_FAIL_MODE / ARIS_TIER2_* — see ../sentinel-agent.mjs
+//
+// Decisions: block → monitor logs/reports, enforce kills.  alert → logged + reported,
+// never killed.  error → the detector threw: logged + reported, never dropped.
 
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import { readFileSync } from "node:fs";
+import { readFileSync, appendFileSync } from "node:fs";
 import { hostname } from "node:os";
-import { fileURLToPath } from "node:url";
-import { decide } from "../sentinel-core.mjs";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { decide, hasTier2, providers } from "../sentinel-core.mjs";
 
 const ENFORCE = process.argv.includes("--enforce");
 const MONITOR = !ENFORCE;
 const MOCK = process.argv.includes("--mock");
 const VERBOSE = process.env.ARIS_VERBOSE === "1";
-const API_KEY = process.env.ANTHROPIC_API_KEY;
 const CLOUD_URL = process.env.ARIS_CLOUD_URL;
 const CLOUD_KEY = process.env.ARIS_INGEST_KEY || "";
 const HOST = process.env.ARIS_HOST || hostname();
 const SENSOR = process.env.ARIS_SENSOR || fileURLToPath(new URL("./sensor.ps1", import.meta.url));
+const INCIDENT_LOG = process.env.ARIS_INCIDENTS || "";
 const OWN_PID = process.pid;
 const MAX_PAYLOAD = 256 * 1024;
 
@@ -61,42 +65,68 @@ function reportToCloud(inc) {
     .finally(() => clearTimeout(t));
 }
 
+function writeIncident(inc) {
+  if (!INCIDENT_LOG) return;
+  try { appendFileSync(INCIDENT_LOG, JSON.stringify(inc) + "\n"); } catch (e) { log(`incident log write failed: ${e.message}`); }
+}
+
 // taskkill /T /F kills the process AND its child tree on Windows.
 function killTree(pid) {
   if (MOCK) return; // never actually kill in a mock replay
   try { spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore" }); } catch {}
 }
 
-async function handleEvent(ev) {
+// Injectable seam for tests (swap `deps.decide` to simulate a throwing detector).
+export const deps = { decide };
+
+export async function handleEvent(ev) {
   const pid = Number(ev.pid);
   const payload = String(ev.payload || "").slice(0, MAX_PAYLOAD);
   if (!payload.trim() || pid === OWN_PID) return;
+  const comm = String(ev.comm || "powershell.exe").toLowerCase();
 
   let d;
-  try { d = await decide(payload, { apiKey: API_KEY }); } catch { return; }
-  if (d.decision !== "block") {
+  try { d = await deps.decide(payload); } catch (e) {
+    // A detector exception is never a silent allow: log it, record it, report it.
+    log(`SENTINEL ERROR  detector threw on pid=${pid}: ${String(e && e.message ? e.message : e).slice(0, 200)}`);
+    const inc = {
+      host: HOST, ts: now(), decision: "error", tier: null, action: "errored",
+      pid, user: ev.user, exe: comm, cmdline: payload.slice(0, 400), score: null, signals: [],
+      reason: "detector exception — payload not judged", error: String(e && e.stack ? e.stack : e).slice(0, 2000),
+      conf: null, reasoning: null, narration: narrationSnippet(payload),
+    };
+    reportToCloud(inc);
+    writeIncident(inc);
+    return inc;
+  }
+  if (d.decision === "allow") {
     if (VERBOSE) log(`allow  tier-${d.tier}  pid=${pid}  score=${d.score.toFixed(2)}  ${d.reason}`);
-    return;
+    return d;
   }
 
-  const comm = String(ev.comm || "powershell.exe").toLowerCase();
-  const protectedHit = PROTECTED.has(comm) ? comm : pid === OWN_PID ? "self" : null;
-  const action = MONITOR ? "DETECTED (monitor — no kill)" : protectedHit ? `SPARED (${protectedHit})` : "KILL";
+  const protectedHit = d.decision === "block" ? (PROTECTED.has(comm) ? comm : null) : null;
+  const action =
+    d.decision === "alert" ? "ALERT (tier-2 unavailable — no kill)"
+    : MONITOR ? "DETECTED (monitor — no kill)"
+    : protectedHit ? `SPARED (${protectedHit})`
+    : "KILL";
   const how = d.tier === 2 ? (d.adjudication?.refused ? "fail-closed" : `conf=${d.adjudication?.confidence?.toFixed(2)}`) : "";
   log(`SENTINEL ${action}  tier-${d.tier}  pid=${pid} user=${ev.user}  score=${d.score.toFixed(2)}${how ? " " + how : ""}`);
   log(`            ${d.reason}`);
   if (d.adjudication?.reasoning) log(`            reasoning: ${d.adjudication.reasoning}`);
 
   const inc = {
-    host: HOST, ts: now(), decision: "block", tier: d.tier,
-    action: MONITOR ? "monitored" : protectedHit ? `spared:${protectedHit}` : "killed",
+    host: HOST, ts: now(), decision: d.decision, tier: d.tier,
+    action: d.decision === "alert" ? "alerted" : MONITOR ? "monitored" : protectedHit ? `spared:${protectedHit}` : "killed",
     pid, user: ev.user, exe: comm, cmdline: payload.slice(0, 400),
-    score: d.score, signals: d.signals,
+    score: d.score, signals: d.signals, reason: d.reason,
     conf: d.adjudication?.confidence ?? null, reasoning: d.adjudication?.reasoning ?? null,
     narration: narrationSnippet(payload),
   };
   reportToCloud(inc);
-  if (ENFORCE && !protectedHit) killTree(pid);
+  if (ENFORCE && d.decision === "block" && !protectedHit) killTree(pid);
+  writeIncident(inc);
+  return inc;
 }
 
 function feed(stream) {
@@ -112,8 +142,9 @@ function feed(stream) {
 function main() {
   log("Aris Sentinel Windows agent starting");
   log(`  mode: ${ENFORCE ? "ENFORCE (kills on detection)" : "MONITOR (detect + alert only — no kill; --enforce to arm)"}`);
-  log(`  tier 2: ${API_KEY ? "ENABLED" : "disabled (tier-1 only)"}`);
+  log(`  tier 2: ${hasTier2() ? `ENABLED (${providers().map((p) => p.name).join(" -> ")})` : "disabled (tier-1 only; set KIMI_API_KEY or ANTHROPIC_API_KEY) — escalate band -> alert"}`);
   log(`  cloud alerts: ${CLOUD_URL ? `-> ${CLOUD_URL}` : "disabled (set ARIS_CLOUD_URL)"}`);
+  if (INCIDENT_LOG) log(`  incidents -> ${INCIDENT_LOG}`);
 
   if (MOCK) {
     log("  MOCK — replaying agent/win/mock-events.jsonl (no Windows, no kill)\n");
@@ -134,4 +165,5 @@ function main() {
   process.on("SIGINT", () => { ps.kill(); process.exit(0); });
 }
 
-main();
+const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isMain) main();

@@ -98,3 +98,7 @@ Install, deploy and de-branding: [agent/DEPLOY.md](agent/DEPLOY.md). Windows: [a
 ## Security
 
 This is a defensive tool. Found a bypass or a bug that could hurt someone running it? See [SECURITY.md](SECURITY.md).
+
+## License
+
+[Apache-2.0](LICENSE). Copyright 2026 Aris Tech LLC.

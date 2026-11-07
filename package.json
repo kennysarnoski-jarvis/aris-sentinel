@@ -5,6 +5,7 @@
   "type": "module",
   "description": "Runtime defense agent that detects agentic AI attackers by their self-narration signature.",
   "scripts": {
+    "score": "node agent/score.mjs",
     "test": "bun run test/runCorpus.ts",
     "test:unit": "bun test",
     "typecheck": "tsc --noEmit",

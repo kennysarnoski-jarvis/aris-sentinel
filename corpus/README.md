@@ -67,6 +67,32 @@ Before that change the pipeline was 72/74 and fpRate 2/12 on the same model.
 Caveat: one model, one machine, one day. The harnesses exist so the next judge gets the
 same cells.
 
+### 2026-11-07 — tier 2 live, Claude (Opus 5.5 with server-side fallbacks)
+
+Same cells, same day, hosted judge. `ANTHROPIC_API_KEY` only; the matrix also ran Sonnet 5.5
+and Haiku 5.5 as comparison legs.
+
+| run | result |
+|---|---|
+| pipeline, 28 positives + 40 benign + 3 novel attacks | **74/74**: agentic 28/28 blocked, benign 40/40 allowed. 1 of 32 tier-2 calls ended fail-closed (below) and still blocked correctly |
+| fpRate, 12 benign-but-loud samples | **0/12** (6 judged, all cleared, conf 0.93–0.96) |
+| tier2, 3 escalated attacks + 2 controls | **5/5** decisions; 4 real verdicts, 1 fail-closed |
+| matrix, Opus 5.5 / Sonnet 5.5 / Haiku 5.5 × 2 prompts × 8 cases | **48/48**, 0 unrescued refusals |
+
+The fallbacks are the story. Of the 48 matrix cells, **10 were declined by the requested
+model's cyber classifier and rescued in the same call** by the fallback (Opus 5.5 → Opus 4.8
+six times, Sonnet 5.5 → Sonnet 5 four times), every rescue returning the right verdict:
+both attack controls under both prompts on both models, plus two benign samples under the
+original prompt on Opus. Haiku 5.5 declined nothing. Without `fallbacks: "default"` those
+ten cells are fail-closed blocks, which is the July result in miniature.
+
+One payload was declined by Opus 5.5 under both prompts *and* by its fallback: the
+file-ransomware probe (`anthropic1=refusal:cyber, anthropic2=refusal:cyber`). It fell to
+fail-closed and was blocked, which is the designed outcome, but it is a block without a
+verdict. A local judge first in the chain closes that gap: qwen2.5:14b answered it.
+
+Both judges agree on every decision. The difference is where the text goes.
+
 ### 2026-07 — original 32 files
 
 Tier 1: precision 1.00 / recall 1.00 on 7 positives, all JadePuffer-derived or close. The

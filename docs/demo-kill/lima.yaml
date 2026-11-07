@@ -1,0 +1,38 @@
+# A throwaway Ubuntu 24.04 VM for the kill demo, via Lima (brew install lima).
+#   limactl start --name aris-demo --tty=false docs/demo-kill/lima.yaml
+#   docs/demo-kill/run.sh            # arms the agent, fires the attacker + a benign job
+#   limactl delete -f aris-demo      # tear it down
+# Falco (modern eBPF, no kernel module) and Node are installed natively, the same way
+# agent/DEPLOY.md does it on a real box. The repo is mounted read-write at its own path.
+vmType: "vz"
+cpus: 4
+memory: "6GiB"
+disk: "20GiB"
+images:
+  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img"
+    arch: "aarch64"
+  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img"
+    arch: "x86_64"
+mounts:
+  - location: "/Volumes/ArisLLM/Projects-Archive/aris-sentinel"
+    writable: true
+  - location: "/tmp/lima"
+    writable: true
+containerd:
+  system: false
+  user: false
+provision:
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux
+      export DEBIAN_FRONTEND=noninteractive FALCO_DRIVER_CHOICE=modern_ebpf FALCO_FRONTEND=noninteractive
+      apt-get update
+      apt-get install -y --no-install-recommends nodejs python3 curl gnupg ca-certificates
+      curl -fsSL https://falco.org/repo/falcosecurity-packages.asc | gpg --dearmor -o /usr/share/keyrings/falco-archive-keyring.gpg
+      echo "deb [signed-by=/usr/share/keyrings/falco-archive-keyring.gpg] https://download.falco.org/packages/deb stable main" > /etc/apt/sources.list.d/falcosecurity.list
+      apt-get update
+      apt-get install -y --no-install-recommends falco
+      # our agent spawns falco itself; keep the packaged services out of the way
+      systemctl disable --now falco falco-modern-bpf falco-bpf falco-kmod falcoctl-artifact-follow 2>/dev/null || true
+      node --version; falco --version

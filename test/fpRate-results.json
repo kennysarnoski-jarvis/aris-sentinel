@@ -16,9 +16,9 @@
       ],
       "adjudication": {
         "agentic": false,
-        "confidence": 1
+        "confidence": 0.93
       },
-      "reason": "tier-2: adjudged not-agentic (conf 1.00)",
+      "reason": "tier-2: adjudged not-agentic (conf 0.93)",
       "fp": false
     },
     {
@@ -32,9 +32,9 @@
       ],
       "adjudication": {
         "agentic": false,
-        "confidence": 1
+        "confidence": 0.95
       },
-      "reason": "tier-2: adjudged not-agentic (conf 1.00)",
+      "reason": "tier-2: adjudged not-agentic (conf 0.95)",
       "fp": false
     },
     {
@@ -48,9 +48,9 @@
       ],
       "adjudication": {
         "agentic": false,
-        "confidence": 1
+        "confidence": 0.96
       },
-      "reason": "tier-2: adjudged not-agentic (conf 1.00)",
+      "reason": "tier-2: adjudged not-agentic (conf 0.96)",
       "fp": false
     },
     {
@@ -64,9 +64,9 @@
       ],
       "adjudication": {
         "agentic": false,
-        "confidence": 1
+        "confidence": 0.95
       },
-      "reason": "tier-2: adjudged not-agentic (conf 1.00)",
+      "reason": "tier-2: adjudged not-agentic (conf 0.95)",
       "fp": false
     },
     {
@@ -120,9 +120,9 @@
       ],
       "adjudication": {
         "agentic": false,
-        "confidence": 1
+        "confidence": 0.95
       },
-      "reason": "tier-2: adjudged not-agentic (conf 1.00)",
+      "reason": "tier-2: adjudged not-agentic (conf 0.95)",
       "fp": false
     },
     {
@@ -159,9 +159,9 @@
       ],
       "adjudication": {
         "agentic": false,
-        "confidence": 1
+        "confidence": 0.95
       },
-      "reason": "tier-2: adjudged not-agentic (conf 1.00)",
+      "reason": "tier-2: adjudged not-agentic (conf 0.95)",
       "fp": false
     }
   ]

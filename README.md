@@ -106,7 +106,7 @@ exec / script-block  ─►  decode (base64 · hex · nested)  ─►  tier 1: n
 | judge | config | why you'd pick it |
 |---|---|---|
 | **local** | `OPENAI_BASE_URL=http://127.0.0.1:11434/v1` + `OPENAI_MODEL` (Ollama, vLLM, llama.cpp) | nothing leaves the box; first in the chain by default. `qwen2.5:14b` went 74/74 on the corpus |
-| **anthropic** | `ANTHROPIC_API_KEY` (Claude Opus 5.5) | strongest judgment; server-side fallbacks on classifier refusals |
+| **anthropic** | `ANTHROPIC_API_KEY` (Claude Opus 5.5) | 74/74 on the corpus; server-side fallbacks rescued 10/48 classifier declines in the matrix |
 | **openai** | `OPENAI_API_KEY` + `OPENAI_MODEL`, or any remote OpenAI-compatible `OPENAI_BASE_URL` | bring your own |
 | **kimi** | `KIMI_API_KEY` (Kimi K3) | no cyber input screen |
 
@@ -137,11 +137,24 @@ Numbers from the labeled corpus, measured with the detector frozen *before* the 
 
 **The limit, stated plainly:** an agent told not to narrate is invisible to this. Zero narration is zero signal. Tier 2 narrows that gap and cannot close it. The stress test of a mutating attacker (`test/loop/`) caught 4 of 6 attempts; the two that evaded had suppressed their narration and achieved nothing real.
 
-**With a judge, measured live (2026-11-07, local `qwen2.5:14b` through Ollama, nothing leaving the machine):** the full pipeline went **74/74**: all 28 agentic files blocked (17 at tier 1, 11 convicted by the judge), all 40 benign files allowed, 0/12 on the adversarial false-positive set, 5/5 on the novel attacks. The judge matrix also showed *why the prompt matters*: with the original prompt a 14B model convicts anything plan-shaped; with the two-criteria prompt (AI authorship *and* malicious intent) it is 8/8. That prompt now leads on every judge. One model, one day; the harnesses re-run on whatever you deploy.
+**With a judge, measured live (2026-11-07), two judges on the same cells:**
+
+| | local `qwen2.5:14b` (Ollama, nothing leaves the box) | Claude Opus 5.5 (server-side fallbacks on) |
+|---|---|---|
+| pipeline: 28 agentic + 40 benign + 3 novel | 74/74 | 74/74 |
+| adversarial false-positive set | 0/12 | 0/12 |
+| novel attacks tier 1 only escalates | 5/5 | 5/5 (one via fail-closed: the cyber classifier declined it on every attempt) |
+| judge matrix | 8/8 | 48/48 across Opus, Sonnet and Haiku 5.5 |
+
+The matrix also showed *why the prompt matters*: with the original prompt the 14B model convicts anything plan-shaped; with the two-criteria prompt (AI authorship *and* malicious intent) it is 8/8, so that prompt now leads on every judge. And it showed the fallbacks working: 10 of 48 Claude cells were declined by the 5.5 classifier and rescued in the same call by Opus 4.8 or Sonnet 5, every rescue correct. Details and caveats in [corpus/README.md](corpus/README.md). One day, two models; the harnesses re-run on whatever you deploy.
 
 ## Run it for real
 
-- **Linux.** [Falco](https://falco.org) taps every exec via eBPF; the agent scores the command line plus, for interpreters, the script file (resolved against the process's own cwd). Protected-process allowlist, per-session dedup, de-branded install so on-box recon sees a boring telemetry daemon. Verified live on Ubuntu 24.04: a narrated attacker SIGKILLed at exec, its destructive step never ran, a benign job untouched. [agent/DEPLOY.md](agent/DEPLOY.md).
+![The kill: on an Ubuntu VM with Falco, a narrated attacker is launched, the agent SIGKILLs it at exec with score 0.78, the destructive step never runs, and a benign job on the same box completes](docs/demo-kill.gif)
+
+Reproduce that in about ten minutes with a throwaway VM: [docs/demo-kill/README.md](docs/demo-kill/README.md).
+
+- **Linux.** [Falco](https://falco.org) taps every exec via eBPF; the agent scores the command line plus, for interpreters, the script file (resolved against the process's own cwd). Protected-process allowlist, per-session dedup, de-branded install so on-box recon sees a boring telemetry daemon. Verified live on Ubuntu 24.04, and recorded above: a narrated attacker SIGKILLed at exec, its destructive step never ran, a benign job untouched. [agent/DEPLOY.md](agent/DEPLOY.md).
 - **Windows.** PowerShell Script Block Logging (Event ID 4104) hands the agent the already-deobfuscated script text. Same detector, `taskkill` instead of SIGKILL. Verified live on Windows Server 2022. [agent/win/WINDOWS.md](agent/win/WINDOWS.md).
 - **At an HTTP sink.** A reverse proxy that blocks the JADEPUFFER entry payload at Langflow's code-exec endpoint (CVE-2025-3248) before `exec()` runs. [docs/RUNBOOK.md](docs/RUNBOOK.md).
 - **What leaves the box, exactly.** [agent/DATA-HANDLING.md](agent/DATA-HANDLING.md). With a local judge and no cloud URL, nothing does.
@@ -151,6 +164,8 @@ Off-box alerting is optional. The agent can POST incidents to any receiver you p
 ## The guardrail problem
 
 A hosted model's safety classifier screens request *content*, not purpose. Ask it to label a captured attack payload and the classifier can decline before the model reads the question. In July 2026 Anthropic's real-time cyber screen refused 6 of 6 escalations on *benign* Terraform and Docker files that merely used security vocabulary. That is why the judge chain exists, and why three things are built in: a prompt that frames the request as labeling inert evidence and requires both AI authorship and malicious intent (the same prompt that stops a small local model from convicting every plan-shaped runbook), Anthropic's server-side fallbacks (a cyber-category decline is re-run on the model they recommend, inside the same call), and a local judge that has no screen at all. Security vendors can also apply to Anthropic's [Cyber Verification Program](https://support.claude.com/en/articles/14604842-real-time-cyber-safeguards-on-claude-opus-and-sonnet).
+
+**What we saw on 2026-11-07, stated plainly.** Across 48 judge-matrix cells, Claude Opus 5.5 and Sonnet 5.5 declined 10 before judging: every attack-control payload on both models, and two benign ops files on Opus under the original prompt. All 10 were rescued in the same call by the fallback model (Opus 4.8, Sonnet 5) with the correct verdict. One payload, the file-ransomware probe, was declined by Opus 5.5 on both attempts and by its fallback too. It fell to fail-closed and was blocked, which is the designed outcome, but it was a block without a verdict. The local `qwen2.5:14b` judge answered that same payload, and matched Claude on every other decision. Haiku 5.5 declined nothing in the matrix but has no server-side fallback, so a decline there stays declined. The honest summary: hosted frontier models carry safety classifiers that fire on attack-shaped text regardless of your intent, the fallbacks recover most of it, a local model recovers the rest, and the chain exists so you don't have to choose. Anthropic's Cyber Verification Program is the route to lifting the classifier on a verified vendor's key. Full tables: [corpus/README.md](corpus/README.md).
 
 ## Configuration
 

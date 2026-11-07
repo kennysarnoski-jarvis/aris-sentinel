@@ -33,22 +33,37 @@ export interface Adjudication {
   confidence: number;
   reasoning: string;
   refused?: boolean;
+  /** the model that produced the verdict (a server-side fallback may differ from the one asked for) */
+  model?: string;
 }
 export type AttemptResult = { ok: Adjudication } | { stop: string };
 
+export type Wire = "anthropic" | "openai";
+export interface Attempt {
+  system?: string;
+  thinking?: boolean;
+}
 export interface Provider {
   name: string;
+  wire: Wire;
   url: string;
   headers: Record<string, string>;
   model: string;
-  attempts: { thinking: boolean }[];
+  /** Anthropic leg only: output_config.effort */
+  effort?: "low" | "medium" | "high" | "xhigh" | "max";
+  /** Anthropic leg only: ask for server-side fallbacks on a classifier refusal */
+  fallbacks?: boolean;
+  attempts: Attempt[];
 }
 export interface AttemptOptions {
   url: string;
   headers?: Record<string, string>;
   model: string;
+  wire?: Wire;
   thinking?: boolean;
   system?: string;
+  effort?: Provider["effort"];
+  fallbacks?: boolean;
   timeoutMs?: number;
   fetch?: typeof fetch;
 }
@@ -112,6 +127,11 @@ export const DEFAULT_MODEL: string;
 export const ANTHROPIC_URL: string;
 export const KIMI_URL: string;
 export const KIMI_MODEL: string;
+export const OPENAI_URL: string;
+export const DEFAULT_ORDER: string[];
+export const FALLBACK_BETA: string;
+export function fallbackCapable(model: string | undefined): boolean;
+export function providerWarnings(env?: Record<string, string | undefined>): string[];
 export function normalizeVerdict(v: unknown): Adjudication | null;
 export function parseVerdict(text: string): Adjudication | null;
 export function providers(env?: Record<string, string | undefined>): Provider[];

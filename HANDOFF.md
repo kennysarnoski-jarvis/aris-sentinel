@@ -32,7 +32,12 @@ signals as before the refactor (`test/corpus-snapshot.json`).
 ## Constraints respected
 - Agent + core are plain Node ≥ 18, zero deps; the core is still one file (`install.sh` unchanged).
 - Kimi endpoint is `api.kimi.com/coding` (Anthropic wire, Bearer, slug `k3`).
-- `claude-opus-4-8` and both prompts unchanged. `attempt()` / `SYSTEM_AUTHORSHIP` exports kept for `test/adjudicatorMatrix.ts`.
+- Both prompts unchanged. `attempt()` / `SYSTEM_AUTHORSHIP` exports kept for `test/adjudicatorMatrix.ts`.
+- **Later on 2026-11-07, with Kenny's OK:** the default judge moved from Kimi K3 to Claude
+  Opus 5.5 with server-side fallbacks + a de-fanged-prompt retry, and an OpenAI-wire leg
+  was added so a local model (Ollama/vLLM) can judge with nothing leaving the box. Chain
+  order is `ARIS_TIER2_ORDER` (default `local,anthropic,openai,kimi`). Fail-closed policy
+  unchanged. None of the key-needed suites have been run on the new chain yet.
 - MONITOR is still the default; `alert` and `error` never kill, even in `--enforce`.
 
 ## Not done here

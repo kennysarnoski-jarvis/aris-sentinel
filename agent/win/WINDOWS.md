@@ -36,7 +36,7 @@ Set-ItemProperty -Path $k -Name EnableScriptBlockLogging -Value 1
 1. Install **Node 18+** on the host.
 2. Copy `sensor.ps1`, `sentinel-agent-win.mjs`, and `../sentinel-core.mjs` (keep the agent
    and core together; `sentinel-agent-win.mjs` imports `../sentinel-core.mjs`).
-3. Set env (same as Linux): `KIMI_API_KEY` or `ANTHROPIC_API_KEY` (tier 2; without one the
+3. Set env (same as Linux): `ANTHROPIC_API_KEY`, or `OPENAI_BASE_URL`+`OPENAI_MODEL` for a local judge (tier 2; without one the
    escalate band is alerted, never killed), `ARIS_CLOUD_URL` + `ARIS_INGEST_KEY` (alerts via
    Aris Cloud), `ARIS_INCIDENTS` (optional local JSONL incident log).
 4. Run as a SYSTEM service (via NSSM or a scheduled task at startup):

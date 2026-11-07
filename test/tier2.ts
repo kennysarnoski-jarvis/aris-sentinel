@@ -1,8 +1,9 @@
 // Tier-2 generalization test — does the Aris LLM adjudication catch the
 // novel-style agentic attacks that the tier-1 regexes only "escalated"?
 //
-// Requires: KIMI_API_KEY (default judge) or ANTHROPIC_API_KEY (fallback) in the env.
-// Costs a few cents (a handful of LLM calls).
+// Requires at least one tier-2 judge in the env: ANTHROPIC_API_KEY (Claude Opus 5.5),
+// OPENAI_BASE_URL + OPENAI_MODEL (a local model), OPENAI_API_KEY + OPENAI_MODEL, or
+// KIMI_API_KEY. Costs a few cents on a hosted judge (a handful of LLM calls).
 //
 // Results are written to disk (test/tier2-results.json + .md) AS THEY RUN, so a
 // partial run still leaves a readable artifact — and so the findings can be read
@@ -12,7 +13,7 @@
 //   bun run test/tier2.ts           # full 5 calls, writes the real proof
 
 import { writeFileSync } from "node:fs";
-import { adjudicate } from "../detector/adjudicate";
+import { adjudicate, providers } from "../detector/adjudicate";
 import { inspect } from "../detector/inspect";
 
 interface Case { name: string; expect: "agentic" | "not"; text: string }
@@ -60,11 +61,12 @@ aws s3 cp /backups/db.sql.gz s3://acme-backups/`,
 
 const SMOKE = process.argv.includes("--smoke");
 // Cheap plumbing check: valid key? JSON parses? real verdict? The model override only
-// applies to the Anthropic leg; with KIMI_API_KEY set the smoke runs on K3 (already cheap).
-const SMOKE_MODEL = "claude-haiku-4-5-20251001";
-// Label the run by the judge that will actually answer — mirrors the provider
-// chain in detector/adjudicate.ts (Kimi K3 default, Anthropic opt-in fallback).
-const JUDGE = process.env.KIMI_API_KEY ? "Kimi K3" : process.env.ANTHROPIC_API_KEY ? "claude-opus-4-8" : "NO-PROVIDER (fail-closed)";
+// applies to the Anthropic leg (Haiku 5.5 has no server-side fallback, so a classifier
+// decline on the smoke is reported, not rescued); other legs run as configured.
+const SMOKE_MODEL = "claude-haiku-5-5";
+// Label the run by the chain that will actually answer, in order.
+const CHAIN = providers();
+const JUDGE = CHAIN.length ? CHAIN.map((p) => `${p.name}:${p.model}`).join(" -> ") : "NO-PROVIDER (fail-closed)";
 
 interface Row {
   name: string;
@@ -168,6 +170,6 @@ if (SMOKE) {
   console.log(
     ok
       ? "  SMOKE PASSED = key valid, JSON parses, real verdict returned. Now run without --smoke.\n"
-      : `  SMOKE FAILED = no real verdict (${why?.error ?? why?.tier2?.reasoning ?? "unknown"}). Check KIMI_API_KEY (or ANTHROPIC_API_KEY) before the full run.\n`,
+      : `  SMOKE FAILED = no real verdict (${why?.error ?? why?.tier2?.reasoning ?? "unknown"}). Check ANTHROPIC_API_KEY (or the local / OPENAI / KIMI config) before the full run.\n`,
   );
 }

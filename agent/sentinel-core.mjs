@@ -217,17 +217,28 @@ export function inspect(raw) {
 // ═════════════════════════════════════════════════════════════════════════════
 //
 // Judges the CONCEPT ("is this an autonomous LLM narrating an attack?") so it catches
-// styles the regexes were never tuned on. Provider chain (matrix-proven 2026-07-21):
-//   1. Kimi K3 (api.kimi.com/coding, Anthropic Messages wire, Bearer) when KIMI_API_KEY
-//      is set — the default judge. Anthropic's real-time cyber screen refused 6/6
-//      benign escalations before the model judged them; K3 judged all 16 cells right.
-//   2. Anthropic (claude-opus-4-8) when ANTHROPIC_API_KEY is set — opt-in fallback.
-//      Attempt 1 with adaptive thinking (best judgment), attempt 2 thinking-off (a
-//      thinking model can reason itself into a refusal on an overtly-offensive payload).
-//   3. No verdict from anyone -> fail CLOSED (refused: true). Never throws, never passes.
+// styles the regexes were never tuned on. Any number of judges can be configured; the
+// chain runs them in order and the first validated verdict wins:
+//   local      any OpenAI-compatible endpoint on loopback (Ollama, vLLM, llama.cpp):
+//              OPENAI_BASE_URL=http://127.0.0.1:11434/v1 + OPENAI_MODEL. Nothing leaves
+//              the box. First by default when configured.
+//   anthropic  ANTHROPIC_API_KEY -> Claude Opus 5.5 (ARIS_MODEL overrides). Anthropic's
+//              real-time cyber classifier can decline a request about attack-shaped text
+//              (that is what refused 6/6 BENIGN escalations in July 2026), so the leg asks
+//              for server-side fallbacks (`fallbacks: "default"`: a cyber-category decline
+//              is re-run on the model Anthropic recommends, inside the same call) and
+//              retries once with the de-fanged SYSTEM_AUTHORSHIP prompt.
+//   openai     OPENAI_API_KEY (+ OPENAI_MODEL) against api.openai.com or any remote
+//              OpenAI-compatible endpoint (OPENAI_BASE_URL).
+//   kimi       KIMI_API_KEY -> Kimi K3 at api.kimi.com/coding (Anthropic wire, Bearer).
+// ARIS_TIER2_ORDER=local,anthropic,openai,kimi (the default) reorders the chain.
 //
-// Every attempt has a timeout and the whole chain has a deadline; a timeout is a
-// failed attempt and falls through to the next provider, then to fail-closed.
+// A refusal, timeout, HTTP error or malformed reply is a failed attempt; the chain moves
+// on, and when nobody answers the verdict fails CLOSED (refused: true). That stays the
+// policy on purpose: attack narration is exactly the text a safety classifier declines,
+// so a refusal is not evidence of innocence. Operators who would rather page than block
+// on an outage set ARIS_FAIL_MODE=alert. Legitimate security vendors can also apply to
+// Anthropic's Cyber Verification Program to lift the real-time classifier on their key.
 
 // Framing matters for refusals: make it unambiguous this is a DEFENSIVE detector
 // LABELING an inert, already-captured artifact — not a request to help with the attack.
@@ -257,14 +268,29 @@ export const USER = (payload) =>
   payload +
   '\n```\n\nRespond with ONLY a JSON object, no prose:\n{"agentic": <true|false>, "confidence": <0..1>, "reasoning": "<one sentence>"}';
 
-export const DEFAULT_MODEL = "claude-opus-4-8";
+export const DEFAULT_MODEL = "claude-opus-5-5";
 export const ANTHROPIC_URL = "https://api.anthropic.com";
 export const KIMI_URL = "https://api.kimi.com/coding"; // Anthropic wire, coding-plan keys. NOT api.moonshot.ai.
 export const KIMI_MODEL = "k3";
+export const OPENAI_URL = "https://api.openai.com/v1";
+export const DEFAULT_ORDER = ["local", "anthropic", "openai", "kimi"];
+export const FALLBACK_BETA = "server-side-fallback-2026-07-01";
+const EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
+// Models that accept the server-side `fallbacks` parameter (Opus/Sonnet/Fable 5.x).
+// Haiku 5.5 has no server-side fallback and older models predate the feature.
+export const fallbackCapable = (model) => /^claude-(opus|sonnet|fable)-5/.test(String(model || ""));
 
 const num = (v, d) => {
   const n = Number(v);
   return Number.isFinite(n) && n >= 0 ? n : d;
+};
+const isLoopback = (url) => {
+  try {
+    const h = new URL(url).hostname.replace(/^\[|\]$/g, "");
+    return h === "localhost" || h === "127.0.0.1" || h === "::1" || h.endsWith(".localhost");
+  } catch {
+    return false;
+  }
 };
 
 /**
@@ -287,6 +313,7 @@ export function normalizeVerdict(v) {
   if (typeof reasoning !== "string") return null;
   const out = { agentic, confidence, reasoning: reasoning.slice(0, 2000) };
   if (v.refused === true) out.refused = true;
+  if (typeof v.model === "string" && v.model) out.model = v.model.slice(0, 120);
   return out;
 }
 
@@ -301,62 +328,140 @@ export function parseVerdict(text) {
   }
 }
 
-/** The configured tier-2 providers, in chain order. Empty when no key is set. */
+/** The configured tier-2 providers, in chain order. Empty when nothing is configured. */
 export function providers(env = process.env) {
-  const out = [];
+  const all = {};
+  if (env.ANTHROPIC_API_KEY) {
+    const model = env.ARIS_MODEL || DEFAULT_MODEL;
+    all.anthropic = {
+      name: "anthropic",
+      wire: "anthropic",
+      url: (env.ANTHROPIC_BASE_URL || ANTHROPIC_URL).replace(/\/$/, "") + "/v1/messages",
+      headers: { "x-api-key": env.ANTHROPIC_API_KEY },
+      model,
+      effort: EFFORTS.has(env.ARIS_TIER2_EFFORT) ? env.ARIS_TIER2_EFFORT : undefined,
+      fallbacks: env.ARIS_TIER2_FALLBACKS !== "0" && fallbackCapable(model),
+      attempts: [{ system: SYSTEM }, { system: SYSTEM_AUTHORSHIP }],
+    };
+  }
+  if ((env.OPENAI_API_KEY || env.OPENAI_BASE_URL) && env.OPENAI_MODEL) {
+    const base = (env.OPENAI_BASE_URL || OPENAI_URL).replace(/\/$/, "");
+    const name = isLoopback(base) ? "local" : "openai";
+    all[name] = {
+      name,
+      wire: "openai",
+      url: base + "/chat/completions",
+      headers: env.OPENAI_API_KEY ? { authorization: `Bearer ${env.OPENAI_API_KEY}` } : {},
+      model: env.OPENAI_MODEL,
+      attempts: [{ system: SYSTEM }, { system: SYSTEM_AUTHORSHIP }],
+    };
+  }
   if (env.KIMI_API_KEY) {
-    out.push({
+    all.kimi = {
       name: "kimi",
+      wire: "anthropic",
       url: (env.KIMI_BASE_URL || KIMI_URL).replace(/\/$/, "") + "/v1/messages",
       headers: { authorization: `Bearer ${env.KIMI_API_KEY}` },
       model: env.KIMI_MODEL || KIMI_MODEL,
-      attempts: [{ thinking: false }],
-    });
+      attempts: [{ system: SYSTEM }],
+    };
   }
-  if (env.ANTHROPIC_API_KEY) {
-    out.push({
-      name: "anthropic",
-      url: (env.ANTHROPIC_BASE_URL || ANTHROPIC_URL).replace(/\/$/, "") + "/v1/messages",
-      headers: { "x-api-key": env.ANTHROPIC_API_KEY },
-      model: env.ARIS_MODEL || DEFAULT_MODEL,
-      attempts: [{ thinking: true }, { thinking: false }],
-    });
+  const order = env.ARIS_TIER2_ORDER ? env.ARIS_TIER2_ORDER.split(",").map((x) => x.trim()).filter(Boolean) : DEFAULT_ORDER;
+  return order.map((n) => all[n]).filter(Boolean);
+}
+
+/** Misconfigurations worth a startup log line (not errors: the agent still runs). */
+export function providerWarnings(env = process.env) {
+  const out = [];
+  if ((env.OPENAI_API_KEY || env.OPENAI_BASE_URL) && !env.OPENAI_MODEL) out.push("OPENAI_BASE_URL / OPENAI_API_KEY set but OPENAI_MODEL is empty: the openai-wire judge is disabled");
+  if (env.ARIS_TIER2_EFFORT && !EFFORTS.has(env.ARIS_TIER2_EFFORT)) out.push(`ARIS_TIER2_EFFORT=${env.ARIS_TIER2_EFFORT} is not one of low|medium|high|xhigh|max: ignored`);
+  if (env.ARIS_TIER2_ORDER) {
+    const known = new Set(DEFAULT_ORDER);
+    for (const n of env.ARIS_TIER2_ORDER.split(",").map((x) => x.trim()).filter(Boolean)) if (!known.has(n)) out.push(`ARIS_TIER2_ORDER names unknown provider "${n}"`);
   }
   return out;
 }
 
 export const hasTier2 = (env = process.env) => providers(env).length > 0;
 
+const textOfAnthropic = (data) =>
+  (Array.isArray(data?.content) ? data.content : [])
+    .filter((b) => b && b.type === "text")
+    .map((b) => b.text)
+    .join("");
+const textOfOpenAI = (msg) => {
+  const c = msg?.content;
+  if (typeof c === "string") return c;
+  if (Array.isArray(c)) return c.filter((b) => b && (b.type === "text" || b.type === "output_text")).map((b) => b.text).join("");
+  return "";
+};
+
 /**
- * One adjudication attempt against one Anthropic-wire endpoint. Returns the validated
- * verdict, or `{stop}` saying why there was none (http status, stop_reason, timeout,
- * invalid-verdict, error:...). NEVER throws.
+ * One adjudication attempt against one endpoint. `wire` selects the request shape:
+ *   anthropic  POST /v1/messages (Claude, Kimi). Sends adaptive thinking, optional
+ *              output_config.effort, and `fallbacks: "default"` + its beta header when the
+ *              model supports server-side fallbacks. A classifier/model refusal comes back
+ *              as `{stop: "refusal:<category>"}`.
+ *   openai     POST /chat/completions (OpenAI, Ollama, vLLM, llama.cpp…). Asks for a JSON
+ *              object; `message.refusal` becomes `{stop: "refusal:model"}`.
+ * Returns the validated verdict (with the serving `model`), or `{stop}` saying why there
+ * was none (http status, stop reason, timeout, invalid-verdict, error:...). NEVER throws.
  */
-export async function attempt(payload, { url, headers, model, thinking = false, system = SYSTEM, timeoutMs = 20_000, fetch: f = globalThis.fetch } = {}) {
+export async function attempt(payload, { url, headers = {}, model, wire = "anthropic", thinking = true, system = SYSTEM, effort, fallbacks = false, timeoutMs = 20_000, fetch: f = globalThis.fetch } = {}) {
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), timeoutMs);
   try {
-    const res = await f(url, {
-      method: "POST",
-      headers: { "content-type": "application/json", "anthropic-version": "2023-06-01", ...headers },
-      body: JSON.stringify({
-        model,
-        max_tokens: 4000,
-        ...(thinking ? { thinking: { type: "adaptive" } } : {}),
-        system,
-        messages: [{ role: "user", content: USER(payload) }],
-      }),
-      signal: ctl.signal,
-    });
+    let req;
+    if (wire === "openai") {
+      req = {
+        headers: { "content-type": "application/json", ...headers },
+        body: {
+          model,
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: USER(payload) },
+          ],
+          response_format: { type: "json_object" },
+        },
+      };
+    } else {
+      req = {
+        headers: {
+          "content-type": "application/json",
+          "anthropic-version": "2023-06-01",
+          ...(fallbacks ? { "anthropic-beta": FALLBACK_BETA } : {}),
+          ...headers,
+        },
+        body: {
+          model,
+          max_tokens: 4000,
+          ...(thinking ? { thinking: { type: "adaptive" } } : {}),
+          ...(effort ? { output_config: { effort } } : {}),
+          ...(fallbacks ? { fallbacks: "default" } : {}),
+          system,
+          messages: [{ role: "user", content: USER(payload) }],
+        },
+      };
+    }
+    const res = await f(url, { method: "POST", headers: req.headers, body: JSON.stringify(req.body), signal: ctl.signal });
     if (!res.ok) return { stop: "http:" + res.status };
     const data = await res.json();
-    const text = (Array.isArray(data?.content) ? data.content : [])
-      .filter((b) => b && b.type === "text")
-      .map((b) => b.text)
-      .join("");
+    let text, stopReason, served;
+    if (wire === "openai") {
+      const choice = Array.isArray(data?.choices) ? data.choices[0] : undefined;
+      if (choice?.message?.refusal) return { stop: "refusal:model" };
+      text = textOfOpenAI(choice?.message);
+      stopReason = choice?.finish_reason;
+      served = data?.model;
+    } else {
+      if (data?.stop_reason === "refusal") return { stop: "refusal:" + (data?.stop_details?.category || "model") };
+      text = textOfAnthropic(data);
+      stopReason = data?.stop_reason;
+      served = data?.model;
+    }
     const v = parseVerdict(text);
-    if (v) return { ok: v };
-    return { stop: data?.stop_reason ? String(data.stop_reason) : "invalid-verdict" };
+    if (v) return { ok: typeof served === "string" && served ? { ...v, model: served } : v };
+    return { stop: stopReason ? String(stopReason) : "invalid-verdict" };
   } catch (e) {
     if (e && e.name === "AbortError") return { stop: "timeout" };
     return { stop: "error:" + String(e && e.message ? e.message : e).slice(0, 120) };
@@ -375,8 +480,8 @@ export const failClosed = (why) => ({
 
 /**
  * Tier-2 adjudication through the provider chain. NEVER throws. Options:
- *   model       override the Anthropic model (tests use a cheap one for smoke runs)
- *   system      override the system prompt
+ *   model       override the Anthropic leg's model (tests use a cheap one for smoke runs)
+ *   system      force one system prompt on every attempt (the matrix harness does this)
  *   env         where keys come from (default process.env)
  *   fetch       injectable for tests
  *   timeoutMs   per attempt   (ARIS_TIER2_TIMEOUT_MS,  default 20 000)
@@ -403,9 +508,12 @@ export async function adjudicate(payload, opts = {}) {
       const r = await attempt(payload, {
         url: p.url,
         headers: p.headers,
+        wire: p.wire,
         model: p.name === "anthropic" && opts.model ? opts.model : p.model,
-        thinking: a.thinking,
-        system: opts.system ?? SYSTEM,
+        thinking: a.thinking ?? true,
+        system: opts.system ?? a.system ?? SYSTEM,
+        effort: p.effort,
+        fallbacks: p.name === "anthropic" && opts.model ? fallbackCapable(opts.model) && p.fallbacks !== false : !!p.fallbacks,
         timeoutMs: Math.min(timeoutMs, remaining),
         fetch: opts.fetch,
       });
@@ -529,7 +637,7 @@ export async function decide(raw, opts = {}) {
   // escalate -> tier 2, if there is a tier 2.
   const adjudicator = opts.adjudicator ?? ((p) => adjudicate(p, opts));
   if (!opts.adjudicator && !hasTier2(env)) {
-    return { ...base, decision: "alert", tier: 1, reason: "tier-1: escalate, tier-2 unavailable (no KIMI_API_KEY / ANTHROPIC_API_KEY) -> alert" };
+    return { ...base, decision: "alert", tier: 1, reason: "tier-1: escalate, tier-2 unavailable (no judge configured) -> alert" };
   }
   const r = await governor.run(payloadKey(t1.scoredLayer), async () => normalizeVerdict(await adjudicator(t1.scoredLayer)) ?? failClosed("adjudicator returned an invalid verdict"));
   if (r.exhausted) {

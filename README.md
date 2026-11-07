@@ -25,7 +25,7 @@ exec / script-block  ─►  decode (base64 · hex · nested)  ─►  tier 1: n
                               allow ◄── <0.30 ──────────────────┤
                                                       escalate (0.30–0.60)
                                                                  │
-                                        tier 2: LLM adjudication (Kimi K3 → Anthropic)
+                               tier 2: LLM judge chain (local → Claude → openai → kimi)
                                                                  │
                      block ◄── agentic / fail-closed ────────────┼──── not-agentic ──► allow
                      alert ◄── no key · budget spent ────────────┘
@@ -40,11 +40,13 @@ exec / script-block  ─►  decode (base64 · hex · nested)  ─►  tier 1: n
 
 Tier 1 resolves `block`/`allow` locally with zero LLM spend; only the escalate band pays for adjudication, and the tier-2 governor caches verdicts, collapses duplicate in-flight calls, caps concurrency and enforces a per-minute budget.
 
-Tier 2 **fails closed**: a refusal, API error or timeout on an escalate-band payload is a `block`, never a pass. Set `ARIS_FAIL_MODE=alert` if you would rather page than kill on an API outage.
+Tier 2 is a **chain of judges**, each optional, first validated verdict wins: a **local** model on loopback (Ollama, vLLM, llama.cpp: nothing leaves the box), **Claude Opus 5.5**, any remote **OpenAI-compatible** endpoint, **Kimi K3**. Attack-shaped text is exactly what a hosted model's safety classifier declines, so the Claude leg asks for Anthropic's server-side fallbacks (a cyber-category decline is re-run on the model Anthropic recommends, inside the same call) and retries once with a de-fanged prompt. Legitimate security vendors can apply to Anthropic's [Cyber Verification Program](https://support.claude.com/en/articles/14604842-real-time-cyber-safeguards-on-claude-opus-and-sonnet) to lift the classifier on their key.
+
+Tier 2 **fails closed**: when no judge produces a verdict (refusals, errors, timeouts), the payload is a `block`, never a pass. A refusal is not evidence of innocence. Set `ARIS_FAIL_MODE=alert` if you would rather page than kill on an outage.
 
 ## Layout — one detector, three entry points
 
-- **[`agent/sentinel-core.mjs`](agent/sentinel-core.mjs)** — **the** detector. The only file that defines a pattern, a prompt or the decision policy: tier-1 features, decode stage, tier-2 provider chain (raw `fetch`, per-attempt timeout + overall deadline, strict verdict validation), the tier-2 governor, and `decide()`. A unit test fails if any other file defines a pattern.
+- **[`agent/sentinel-core.mjs`](agent/sentinel-core.mjs)** — **the** detector. The only file that defines a pattern, a prompt or the decision policy: tier-1 features, decode stage, tier-2 judge chain (raw `fetch` on the Anthropic and OpenAI wires, per-attempt timeout + overall deadline, strict verdict validation, refusal handling), the tier-2 governor, and `decide()`. A unit test fails if any other file defines a pattern.
 - **`detector/*.ts`** — thin typed re-exports of the core for the TypeScript test harnesses (`sentinel-core.d.mts` carries the types).
 - **`agent/sentinel-agent.mjs`** — Linux agent: Falco exec stream → `decide()` → respond. Reads the script file for interpreter execs, resolved against the *process's* cwd. Protected-process allowlist, per-session dedup, `--selftest`.
 - **`agent/win/sentinel-agent-win.mjs`** + `sensor.ps1` — Windows agent: PowerShell Script Block Logging (4104, auto-deobfuscated) → same `decide()` → `taskkill`.
@@ -56,7 +58,7 @@ Tier 2 **fails closed**: a refusal, API error or timeout on an escalate-band pay
 | command | what it proves | key |
 |---|---|---|
 | `bun run test` | tier-1 corpus, 84 Linux files: **precision 1.00**, tier-1 recall 0.61, **pipeline-reachable recall 1.00** (no agentic sample is `clear`), 0 false positives; decode stage defeats base64 + exec-wrapping | no |
-| `bun test` | **173 unit tests**: verdict validation, timeouts, provider-chain order, governor (cache / dedup / concurrency / budget), block/alert/allow policy, cwd resolution, inline-flag detection, alert + error incidents on both agents, corpus snapshot, single-source guard | no |
+| `bun test` | **183 unit tests**: verdict validation, timeouts, provider-chain order, governor (cache / dedup / concurrency / budget), block/alert/allow policy, cwd resolution, inline-flag detection, alert + error incidents on both agents, corpus snapshot, single-source guard | no |
 | `bun run windows` | 10/10: the same detector catches narrated **PowerShell** unchanged; benign admin + encoded cradles stay clear | no |
 | `bun run pipeline:stub` | routing: only the escalate band reaches tier 2 | no |
 | `bun run selftest` / `bun run win:mock` | agent smoke: block / allow / alert paths end to end, no root | no |
@@ -67,7 +69,7 @@ Tier 2 **fails closed**: a refusal, API error or timeout on an escalate-band pay
 | `bun run fpRate` | 12 benign-but-loud samples through both tiers: **0 false positives** | **yes** |
 | `bun run matrix` | provider × prompt matrix on the samples Anthropic's input screen refused | **yes** |
 
-Key-needed runs read `KIMI_API_KEY` / `ANTHROPIC_API_KEY` and write to `test/*-results.md` (gitignored). `test/corpus-snapshot.json` freezes every corpus verdict; a detector change that moves one fails `bun test` until you regenerate (`bun run corpus:snapshot`) and commit the diff — that diff is the review.
+Key-needed runs use whatever judges are configured (see Configuration) and write to `test/*-results.md` (gitignored). `test/corpus-snapshot.json` freezes every corpus verdict; a detector change that moves one fails `bun test` until you regenerate (`bun run corpus:snapshot`) and commit the diff — that diff is the review.
 
 **The result that sells it:** on 62 held-out files scored before any pattern was touched, tier 1 convicted the loud half locally (12/23), escalated every other agentic sample and **missed none**, blocked **no** benign file, and cleared every terse one-liner. The escalate band on verbose code (13/39 benign files) is a *cost* (one cached LLM call), not a false positive, and it is where tier 2 earns its keep: thin agent narration and a Copilot comment both score 0.31 at tier 1.
 
@@ -75,8 +77,10 @@ Key-needed runs read `KIMI_API_KEY` / `ANTHROPIC_API_KEY` and write to `test/*-r
 
 | env | default | meaning |
 |---|---|---|
-| `KIMI_API_KEY` | — | enables tier 2, Kimi K3 first (`api.kimi.com/coding`, Anthropic wire; **not** `api.moonshot.ai`) |
-| `ANTHROPIC_API_KEY` | — | enables tier 2 on Anthropic (fallback when both are set); `ARIS_MODEL` overrides `claude-opus-4-8` |
+| `ANTHROPIC_API_KEY` | — | Claude judge. `ARIS_MODEL` overrides `claude-opus-5-5`; `ARIS_TIER2_EFFORT` sets `low`…`max`; `ARIS_TIER2_FALLBACKS=0` turns server-side fallbacks off |
+| `OPENAI_BASE_URL` + `OPENAI_MODEL` | — | OpenAI-wire judge. A loopback URL (`http://127.0.0.1:11434/v1` for Ollama) is the **local** leg, first by default; anything else is the **openai** leg. `OPENAI_API_KEY` adds a bearer token (api.openai.com needs it, Ollama does not) |
+| `KIMI_API_KEY` | — | Kimi K3 judge (`api.kimi.com/coding`, Anthropic wire; **not** `api.moonshot.ai`) |
+| `ARIS_TIER2_ORDER` | `local,anthropic,openai,kimi` | chain order; unconfigured legs are skipped |
 | `ARIS_FAIL_MODE` | `closed` | `alert` turns tier-2 refusal/error/timeout into an alert instead of a block |
 | `ARIS_TIER2_TIMEOUT_MS` | `20000` | per attempt |
 | `ARIS_TIER2_DEADLINE_MS` | `45000` | whole provider chain |
@@ -93,7 +97,8 @@ Install, deploy and de-branding: [agent/DEPLOY.md](agent/DEPLOY.md). Windows: [a
 
 - **An agent told not to narrate is invisible to this.** Zero narration = zero signal. That is the design boundary, not a bug; tier 2 narrows it (it judges the concept, not keywords) but cannot close it. `test/loop/` is the stress test of a mutating attacker: 4/6 caught, the two "evasions" achieved nothing real.
 - **Falco observes post-syscall.** The "stop before destruction" guarantee rests on the thesis that narration appears phases before impact — true of every agentic campaign observed so far.
-- **Fail-closed means an adjudicator outage blocks the escalate band** in `--enforce`. That is deliberate for a security tool; `ARIS_FAIL_MODE=alert` is the knob if your risk posture differs.
+- **Fail-closed means an adjudicator outage blocks the escalate band** in `--enforce`. That is deliberate for a security tool; `ARIS_FAIL_MODE=alert` is the knob if your risk posture differs. A hosted judge's safety classifier can also decline benign security-flavoured code; fallbacks and the de-fanged retry reduce that, a local judge removes it.
+- **Judge quality is measured, not assumed.** The tier-2 suites (`bun run matrix`, `bun run tier2`, `bun run fpRate`) exist to compare judges on the same cells; the 2026-07 numbers were on Kimi K3 and Claude Opus 4.8. Re-run them on whatever chain you deploy.
 - **v1 scores every exec.** Busy hosts should scope to sensitive sinks (next) and tune the tier-2 budget.
 - Not built yet: sink scoping, session-level kill, a native Windows installer, Go packaging.
 

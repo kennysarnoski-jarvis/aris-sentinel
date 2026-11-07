@@ -16,14 +16,15 @@ change and the result recorded in corpus/README.md (see its rules).
 ## Commands (key-free)
 - `bun run test:all`: everything below in one go
 - `bun run test`: tier-1 corpus (expect precision 1.00, tier-1 recall 0.61, pipeline-reachable recall 1.00, FP=0)
-- `bun test`: unit tests (expect 173 pass)
+- `bun test`: unit tests (expect 183 pass)
 - `bun run typecheck`: tsc over detector/ and test/ (expect clean)
 - `bun run windows`: PowerShell corpus (expect 10/10)
 - `bun run pipeline:stub`: two-tier routing (expect 6/6)
 - `bun run selftest` and `bun run win:mock`: agent smoke tests
 
-Key-needed runs (`tier2`, `pipeline`, `fpRate`, `matrix`) read `KIMI_API_KEY` /
-`ANTHROPIC_API_KEY` and write results to `test/*-results.md`. Read those files; don't
+Key-needed runs (`tier2`, `pipeline`, `fpRate`, `matrix`) use whatever tier-2 judges are
+configured (`ANTHROPIC_API_KEY`, `OPENAI_BASE_URL`+`OPENAI_MODEL`, `KIMI_API_KEY`) and
+write results to `test/*-results.md`. Read those files; don't
 paste payload output.
 
 ## Rules

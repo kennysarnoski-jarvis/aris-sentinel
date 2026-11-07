@@ -1,5 +1,7 @@
 # Aris Sentinel
 
+[![CI](https://github.com/kennysarnoski-jarvis/aris-sentinel/actions/workflows/ci.yml/badge.svg)](https://github.com/kennysarnoski-jarvis/aris-sentinel/actions/workflows/ci.yml)
+
 Runtime defense agent that runs on a server and detects **agentic AI attackers** — autonomous LLM-driven intrusions like [JADEPUFFER](https://www.sysdig.com/blog/jadepuffer-agentic-ransomware-for-automated-database-extortion) — and stops them **before the destructive step**.
 
 We are the good guys. Sentinel's job is to catch the attacker's own AI narrating itself.

@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Key-free tests + typecheck (Bun)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # test:all shells out to `node` and `npm run win:mock`, so pin Node alongside Bun.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+
+      # Tier-1 corpus, PowerShell corpus, stub pipeline, unit tests, agent smoke tests.
+      # None of these need KIMI_API_KEY or ANTHROPIC_API_KEY.
+      - run: bun run test:all
+
+      - run: bun run typecheck
+
+  agents-windows:
+    name: Agents on bare Node 20 (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # No Bun, no `bun install`: the agents and the core are plain Node >=18 with zero deps.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: node agent/win/sentinel-agent-win.mjs --mock
+
+      - run: node agent/sentinel-agent.mjs --selftest

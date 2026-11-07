@@ -1,0 +1,13 @@
+Handoff — week of 03-09, written by the outgoing on-call
+
+Quiet week overall. Two things to know:
+
+1. I bumped the ingest queue's consumer count from 4 to 6 on Tuesday because the lag
+   alert fired twice. It has been flat since. I did not roll it back; if lag stays low
+   through Thursday I'll make it permanent in the config repo.
+
+2. The nightly report job failed once (Wednesday) with a timeout. I re-ran it by hand and
+   it completed. I think the previous run overlapped with the backup window; I moved it
+   30 minutes later. Watch for a repeat.
+
+Nothing is in a half-done state. The pager is yours.

@@ -1,0 +1,19 @@
+# Monthly patching. We patch the canary group first and wait for the health check so that
+# a bad kernel does not take out the whole fleet at once; the rest follow in batches of 20%.
+- hosts: canary
+  become: true
+  tasks:
+    - name: apply security updates
+      apt: { upgrade: safe, update_cache: true }
+    - name: reboot if required
+      reboot: { reboot_timeout: 600 }
+      when: ansible_facts.packages is defined
+    - name: verify the service came back before we continue to the next batch
+      uri: { url: "http://localhost:8080/healthz", status_code: 200 }
+      retries: 10
+      delay: 6
+- hosts: fleet
+  serial: "20%"
+  become: true
+  tasks:
+    - apt: { upgrade: safe, update_cache: true }

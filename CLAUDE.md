@@ -10,14 +10,15 @@ reliability fixes and what is still unverified live.
 decision policy lives. `detector/*.ts` re-export it; the agents and the demo import it.
 `bun test` fails if you copy a pattern anywhere else, and fails if a corpus verdict
 moves — regenerate `test/corpus-snapshot.json` with `bun run corpus:snapshot` only for an
-intentional change, and commit the diff.
+intentional change, and commit the diff. New corpus samples are scored BEFORE any pattern
+change and the result recorded in corpus/README.md (see its rules).
 
 ## Commands (key-free)
 - `bun run test:all`: everything below in one go
-- `bun run test`: tier-1 corpus (expect precision/recall 1.00)
-- `bun test`: unit tests (expect 111 pass)
+- `bun run test`: tier-1 corpus (expect precision 1.00, tier-1 recall 0.61, pipeline-reachable recall 1.00, FP=0)
+- `bun test`: unit tests (expect 173 pass)
 - `bun run typecheck`: tsc over detector/ and test/ (expect clean)
-- `bun run windows`: PowerShell corpus (expect 5/5)
+- `bun run windows`: PowerShell corpus (expect 10/10)
 - `bun run pipeline:stub`: two-tier routing (expect 6/6)
 - `bun run selftest` and `bun run win:mock`: agent smoke tests
 

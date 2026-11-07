@@ -69,6 +69,22 @@ console.log("\n  === agentic-attacker detection (verdict = block) ===");
 console.log(`  TP=${tp}  FP=${fp}  FN=${fn}  TN=${tn}`);
 console.log(`  precision=${precision.toFixed(2)}   recall=${recall.toFixed(2)}`);
 
+// Tier 1 is the fast shield, not the whole product: an agentic sample that only ESCALATES
+// is caught by tier 2 in the real pipeline, while a benign sample that escalates is a
+// tier-2 COST (one cached LLM call), not a false positive. Report both views.
+console.log("\n  === tier-1 bands per class ===");
+for (const label of ["agentic", "benign", "human-malware"] as Label[]) {
+  const rs = rows.filter((r) => r.label === label);
+  const n = (v: string) => rs.filter((r) => r.verdict === v).length;
+  console.log(`  ${label.padEnd(15)} n=${String(rs.length).padEnd(3)} block=${n("block")}  escalate=${n("escalate")}  clear=${n("clear")}`);
+}
+const agentic = rows.filter((r) => r.label === "agentic");
+const nonAgentic = rows.filter((r) => r.label !== "agentic");
+const reachable = agentic.filter((r) => r.verdict !== "clear").length;
+const benignEsc = nonAgentic.filter((r) => r.verdict === "escalate").length;
+console.log(`  pipeline-reachable recall (block|escalate on agentic) = ${(agentic.length ? reachable / agentic.length : 1).toFixed(2)}   (${reachable}/${agentic.length}; the rest would be MISSED by the full pipeline)`);
+console.log(`  non-agentic escalation rate (tier-2 cost, not FP)    = ${(nonAgentic.length ? benignEsc / nonAgentic.length : 0).toFixed(2)}   (${benignEsc}/${nonAgentic.length})`);
+
 console.log("\n  specificity check — human-malware must NOT read as agentic:");
 for (const r of rows.filter((r) => r.label === "human-malware")) {
   console.log(`   ${flagged(r) ? "x FLAGGED" : "ok clear"}  ${r.file}  (score ${r.score.toFixed(2)})`);

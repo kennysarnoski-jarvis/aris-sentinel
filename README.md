@@ -49,15 +49,15 @@ Tier 2 **fails closed**: a refusal, API error or timeout on an escalate-band pay
 - **`agent/sentinel-agent.mjs`** — Linux agent: Falco exec stream → `decide()` → respond. Reads the script file for interpreter execs, resolved against the *process's* cwd. Protected-process allowlist, per-session dedup, `--selftest`.
 - **`agent/win/sentinel-agent-win.mjs`** + `sensor.ps1` — Windows agent: PowerShell Script Block Logging (4104, auto-deobfuscated) → same `decide()` → `taskkill`.
 - **`interposition/sentinel-langflow-demo.mjs`** — reverse proxy that blocks the CVE-2025-3248 payload at Langflow's exec sink. Imports the core.
-- **`corpus/`** — 32 labeled samples: narrated agentic attacks, verbose-but-benign ops code (the false-positive test), terse human malware (the specificity test), narrated PowerShell.
+- **`corpus/`** — 94 labeled samples: 28 narrated agentic attacks across languages and "voices" (ReAct transcripts, tool-call logs, markdown notes, thin narration), 40 verbose-but-benign files that lean on dual-use language (an agent framework's own source, churn ranking, a defender's checklist), 16 terse human one-liners, 10 PowerShell. Provenance, rules and the held-out results are in [corpus/README.md](corpus/README.md).
 
 ## Tests
 
 | command | what it proves | key |
 |---|---|---|
-| `bun run test` | tier-1 corpus: **precision 1.00 / recall 1.00**, decode stage defeats base64 + exec-wrapping | no |
-| `bun test` | **111 unit tests**: verdict validation, timeouts, provider-chain order, governor (cache / dedup / concurrency / budget), block/alert/allow policy, cwd resolution, inline-flag detection, alert + error incidents on both agents, corpus snapshot, single-source guard | no |
-| `bun run windows` | 5/5: the same detector catches narrated **PowerShell** unchanged | no |
+| `bun run test` | tier-1 corpus, 84 Linux files: **precision 1.00**, tier-1 recall 0.61, **pipeline-reachable recall 1.00** (no agentic sample is `clear`), 0 false positives; decode stage defeats base64 + exec-wrapping | no |
+| `bun test` | **173 unit tests**: verdict validation, timeouts, provider-chain order, governor (cache / dedup / concurrency / budget), block/alert/allow policy, cwd resolution, inline-flag detection, alert + error incidents on both agents, corpus snapshot, single-source guard | no |
+| `bun run windows` | 10/10: the same detector catches narrated **PowerShell** unchanged; benign admin + encoded cradles stay clear | no |
 | `bun run pipeline:stub` | routing: only the escalate band reaches tier 2 | no |
 | `bun run selftest` / `bun run win:mock` | agent smoke: block / allow / alert paths end to end, no root | no |
 | `bun run typecheck` | `tsc --noEmit` over `detector/` + `test/` against the core's declaration file | no |
@@ -69,7 +69,7 @@ Tier 2 **fails closed**: a refusal, API error or timeout on an escalate-band pay
 
 Key-needed runs read `KIMI_API_KEY` / `ANTHROPIC_API_KEY` and write to `test/*-results.md` (gitignored). `test/corpus-snapshot.json` freezes every corpus verdict; a detector change that moves one fails `bun test` until you regenerate (`bun run corpus:snapshot`) and commit the diff — that diff is the review.
 
-**The result that sells it:** attacks blocked (tier 1 *or* tier 2), benign allowed at **both** tiers, terse human malware clear. The escalate band on verbose ops code is a *cost* (one cached LLM call), not a false positive.
+**The result that sells it:** on 62 held-out files scored before any pattern was touched, tier 1 convicted the loud half locally (12/23), escalated every other agentic sample and **missed none**, blocked **no** benign file, and cleared every terse one-liner. The escalate band on verbose code (13/39 benign files) is a *cost* (one cached LLM call), not a false positive, and it is where tier 2 earns its keep: thin agent narration and a Copilot comment both score 0.31 at tier 1.
 
 ## Configuration
 

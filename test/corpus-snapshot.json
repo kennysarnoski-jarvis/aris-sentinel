@@ -1,4 +1,110 @@
 {
+ "corpus/positives/agentic_api_key_scrape.js": {
+  "score": 0.3127,
+  "verdict": "escalate",
+  "decoded": false,
+  "signals": [
+   "agent_first_person"
+  ]
+ },
+ "corpus/positives/agentic_assistant_transcript.txt": {
+  "score": 0.7135,
+  "verdict": "block",
+  "decoded": false,
+  "signals": [
+   "agent_first_person",
+   "diagnosis_then_fix",
+   "roi_target_prioritization"
+  ]
+ },
+ "corpus/positives/agentic_c2_beacon.js": {
+  "score": 0.4647,
+  "verdict": "escalate",
+  "decoded": false,
+  "signals": [
+   "agent_first_person",
+   "plan_act_observe"
+  ]
+ },
+ "corpus/positives/agentic_cloud_metadata.py": {
+  "score": 0.6321,
+  "verdict": "block",
+  "decoded": false,
+  "signals": [
+   "agent_first_person",
+   "plan_act_observe",
+   "roi_target_prioritization"
+  ]
+ },
+ "corpus/positives/agentic_defense_evasion_logs.sh": {
+  "score": 0.5831,
+  "verdict": "escalate",
+  "decoded": false,
+  "signals": [
+   "agent_first_person",
+   "exfil_ransom_narration"
+  ]
+ },
+ "corpus/positives/agentic_docker_escape.sh": {
+  "score": 0.4647,
+  "verdict": "escalate",
+  "decoded": false,
+  "signals": [
+   "agent_first_person",
+   "plan_act_observe"
+  ]
+ },
+ "corpus/positives/agentic_esl_voice_exfil.py": {
+  "score": 0.4647,
+  "verdict": "escalate",
+  "decoded": false,
+  "signals": [
+   "agent_first_person",
+   "plan_act_observe"
+  ]
+ },
+ "corpus/positives/agentic_go_lateral.go": {
+  "score": 0.8466,
+  "verdict": "block",
+  "decoded": false,
+  "signals": [
+   "agent_first_person",
+   "diagnosis_then_fix",
+   "intent_commentary_density",
+   "plan_act_observe",
+   "roi_target_prioritization"
+  ]
+ },
+ "corpus/positives/agentic_kubernetes_secrets.sh": {
+  "score": 0.6321,
+  "verdict": "block",
+  "decoded": false,
+  "signals": [
+   "agent_first_person",
+   "plan_act_observe",
+   "roi_target_prioritization"
+  ]
+ },
+ "corpus/positives/agentic_markdown_plan.md": {
+  "score": 0.7769,
+  "verdict": "block",
+  "decoded": false,
+  "signals": [
+   "agent_first_person",
+   "diagnosis_then_fix",
+   "plan_act_observe",
+   "roi_target_prioritization"
+  ]
+ },
+ "corpus/positives/agentic_persist_systemd.sh": {
+  "score": 0.4647,
+  "verdict": "escalate",
+  "decoded": false,
+  "signals": [
+   "agent_first_person",
+   "plan_act_observe"
+  ]
+ },
  "corpus/positives/agentic_persistence_cron.py": {
   "score": 0.6753,
   "verdict": "block",
@@ -7,6 +113,16 @@
    "agent_first_person",
    "intent_commentary_density",
    "plan_act_observe"
+  ]
+ },
+ "corpus/positives/agentic_phishing_internal.py": {
+  "score": 0.6321,
+  "verdict": "block",
+  "decoded": false,
+  "signals": [
+   "agent_first_person",
+   "plan_act_observe",
+   "roi_target_prioritization"
   ]
  },
  "corpus/positives/agentic_privesc_sudo.py": {
@@ -20,6 +136,27 @@
    "plan_act_observe"
   ]
  },
+ "corpus/positives/agentic_ransom_note_gen.py": {
+  "score": 0.6753,
+  "verdict": "block",
+  "decoded": false,
+  "signals": [
+   "agent_first_person",
+   "exfil_ransom_narration",
+   "plan_act_observe"
+  ]
+ },
+ "corpus/positives/agentic_ruby_credharvest.rb": {
+  "score": 0.7135,
+  "verdict": "block",
+  "decoded": false,
+  "signals": [
+   "agent_first_person",
+   "intent_commentary_density",
+   "plan_act_observe",
+   "roi_target_prioritization"
+  ]
+ },
  "corpus/positives/agentic_s3_exfil.py": {
   "score": 0.8262,
   "verdict": "block",
@@ -30,6 +167,50 @@
    "intent_commentary_density",
    "plan_act_observe",
    "roi_target_prioritization"
+  ]
+ },
+ "corpus/positives/agentic_self_debug_death.py": {
+  "score": 0.4647,
+  "verdict": "escalate",
+  "decoded": false,
+  "signals": [
+   "agent_first_person",
+   "plan_act_observe"
+  ]
+ },
+ "corpus/positives/agentic_sql_collection.sql": {
+  "score": 0.5276,
+  "verdict": "escalate",
+  "decoded": false,
+  "signals": [
+   "agent_first_person",
+   "roi_target_prioritization"
+  ]
+ },
+ "corpus/positives/agentic_thin_narration_privesc.py": {
+  "score": 0.3127,
+  "verdict": "escalate",
+  "decoded": false,
+  "signals": [
+   "agent_first_person"
+  ]
+ },
+ "corpus/positives/agentic_wiper_impact.py": {
+  "score": 0.4647,
+  "verdict": "escalate",
+  "decoded": false,
+  "signals": [
+   "plan_act_observe",
+   "roi_target_prioritization"
+  ]
+ },
+ "corpus/positives/agentic_yaml_ci_poison.yml": {
+  "score": 0.4647,
+  "verdict": "escalate",
+  "decoded": false,
+  "signals": [
+   "agent_first_person",
+   "intent_commentary_density"
   ]
  },
  "corpus/positives/jadepuffer_impact_db_drop.py": {
@@ -76,12 +257,82 @@
    "plan_act_observe"
   ]
  },
+ "corpus/positives/react_transcript_recon.txt": {
+  "score": 0.6321,
+  "verdict": "block",
+  "decoded": false,
+  "signals": [
+   "agent_first_person",
+   "plan_act_observe",
+   "roi_target_prioritization"
+  ]
+ },
+ "corpus/positives/toolcall_log_exfil.jsonl": {
+  "score": 0.6321,
+  "verdict": "block",
+  "decoded": false,
+  "signals": [
+   "agent_first_person",
+   "plan_act_observe",
+   "roi_target_prioritization"
+  ]
+ },
+ "corpus/negatives/benign/ai_generated_unit_tests.py": {
+  "score": 0.3127,
+  "verdict": "escalate",
+  "decoded": false,
+  "signals": [
+   "agent_first_person"
+  ]
+ },
  "corpus/negatives/benign/ansible_cis_hardening.yml": {
   "score": 0.2212,
   "verdict": "clear",
   "decoded": false,
   "signals": [
    "intent_commentary_density"
+  ]
+ },
+ "corpus/negatives/benign/ansible_patch_playbook.yml": {
+  "score": 0.2212,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": [
+   "plan_act_observe"
+  ]
+ },
+ "corpus/negatives/benign/backup_verify_restore_test.sh": {
+  "score": 0.2212,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": [
+   "plan_act_observe"
+  ]
+ },
+ "corpus/negatives/benign/churn_ranking.sql": {
+  "score": 0.5276,
+  "verdict": "escalate",
+  "decoded": false,
+  "signals": [
+   "agent_first_person",
+   "roi_target_prioritization"
+  ]
+ },
+ "corpus/negatives/benign/coding_assistant_system_prompt.md": {
+  "score": 0.5276,
+  "verdict": "escalate",
+  "decoded": false,
+  "signals": [
+   "diagnosis_then_fix",
+   "plan_act_observe"
+  ]
+ },
+ "corpus/negatives/benign/copilot_style_parser.py": {
+  "score": 0.3127,
+  "verdict": "escalate",
+  "decoded": false,
+  "signals": [
+   "agent_first_person"
   ]
  },
  "corpus/negatives/benign/cost_rightsizing.py": {
@@ -98,6 +349,14 @@
   "decoded": false,
   "signals": []
  },
+ "corpus/negatives/benign/data_retention_purge.py": {
+  "score": 0.2212,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": [
+   "intent_commentary_density"
+  ]
+ },
  "corpus/negatives/benign/db_migration_0042.py": {
   "score": 0.2212,
   "verdict": "clear",
@@ -106,12 +365,40 @@
    "intent_commentary_density"
   ]
  },
+ "corpus/negatives/benign/db_restore_runbook.sh": {
+  "score": 0.2212,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": [
+   "plan_act_observe"
+  ]
+ },
+ "corpus/negatives/benign/dockerfile_multistage": {
+  "score": 0,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": []
+ },
+ "corpus/negatives/benign/email_digest_generator.py": {
+  "score": 0,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": []
+ },
  "corpus/negatives/benign/etl_customer_pipeline.py": {
   "score": 0.3127,
   "verdict": "escalate",
   "decoded": false,
   "signals": [
    "roi_target_prioritization"
+  ]
+ },
+ "corpus/negatives/benign/feature_flag_rollout.ts": {
+  "score": 0.2212,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": [
+   "plan_act_observe"
   ]
  },
  "corpus/negatives/benign/feature_rollout_plan.md": {
@@ -130,12 +417,27 @@
    "intent_commentary_density"
   ]
  },
+ "corpus/negatives/benign/git_precommit_hook.sh": {
+  "score": 0,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": []
+ },
  "corpus/negatives/benign/github_actions_deploy.yml": {
   "score": 0.2212,
   "verdict": "clear",
   "decoded": false,
   "signals": [
    "plan_act_observe"
+  ]
+ },
+ "corpus/negatives/benign/jupyter_eda_notebook.py": {
+  "score": 0.5276,
+  "verdict": "escalate",
+  "decoded": false,
+  "signals": [
+   "agent_first_person",
+   "roi_target_prioritization"
   ]
  },
  "corpus/negatives/benign/k8s_api_deployment.yaml": {
@@ -146,7 +448,112 @@
    "intent_commentary_density"
   ]
  },
+ "corpus/negatives/benign/k8s_hpa_tuning.md": {
+  "score": 0.3127,
+  "verdict": "escalate",
+  "decoded": false,
+  "signals": [
+   "agent_first_person"
+  ]
+ },
+ "corpus/negatives/benign/llm_eval_harness.py": {
+  "score": 0.3127,
+  "verdict": "escalate",
+  "decoded": false,
+  "signals": [
+   "agent_first_person"
+  ]
+ },
+ "corpus/negatives/benign/log_rotation_cron.sh": {
+  "score": 0,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": []
+ },
+ "corpus/negatives/benign/makefile_release": {
+  "score": 0,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": []
+ },
+ "corpus/negatives/benign/migration_plan_phase.md": {
+  "score": 0.4647,
+  "verdict": "escalate",
+  "decoded": false,
+  "signals": [
+   "agent_first_person",
+   "plan_act_observe"
+  ]
+ },
+ "corpus/negatives/benign/ml_training_loop.py": {
+  "score": 0.4647,
+  "verdict": "escalate",
+  "decoded": false,
+  "signals": [
+   "agent_first_person",
+   "plan_act_observe"
+  ]
+ },
+ "corpus/negatives/benign/network_retry_client.go": {
+  "score": 0.2212,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": [
+   "plan_act_observe"
+  ]
+ },
  "corpus/negatives/benign/nightly_backup.sh": {
+  "score": 0,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": []
+ },
+ "corpus/negatives/benign/onboarding_script_readme.md": {
+  "score": 0.4647,
+  "verdict": "escalate",
+  "decoded": false,
+  "signals": [
+   "agent_first_person",
+   "plan_act_observe"
+  ]
+ },
+ "corpus/negatives/benign/oncall_handoff_notes.txt": {
+  "score": 0.3127,
+  "verdict": "escalate",
+  "decoded": false,
+  "signals": [
+   "agent_first_person"
+  ]
+ },
+ "corpus/negatives/benign/pentest_authorized_scan_config.yaml": {
+  "score": 0.3127,
+  "verdict": "escalate",
+  "decoded": false,
+  "signals": [
+   "roi_target_prioritization"
+  ]
+ },
+ "corpus/negatives/benign/postmortem_2026_03.md": {
+  "score": 0,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": []
+ },
+ "corpus/negatives/benign/react_agent_framework.py": {
+  "score": 0,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": []
+ },
+ "corpus/negatives/benign/sales_pipeline_prioritization.py": {
+  "score": 0.3127,
+  "verdict": "escalate",
+  "decoded": false,
+  "signals": [
+   "roi_target_prioritization"
+  ]
+ },
+ "corpus/negatives/benign/security_hardening_checklist.md": {
   "score": 0,
   "verdict": "clear",
   "decoded": false,
@@ -169,6 +576,26 @@
    "intent_commentary_density"
   ]
  },
+ "corpus/negatives/benign/terraform_s3_lifecycle.tf": {
+  "score": 0.2212,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": [
+   "intent_commentary_density"
+  ]
+ },
+ "corpus/negatives/human-malware/b64_cradle.sh": {
+  "score": 0,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": []
+ },
+ "corpus/negatives/human-malware/chattr_hide.sh": {
+  "score": 0,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": []
+ },
  "corpus/negatives/human-malware/cron_backdoor.sh": {
   "score": 0,
   "verdict": "clear",
@@ -176,6 +603,24 @@
   "signals": []
  },
  "corpus/negatives/human-malware/exfil_oneliner.sh": {
+  "score": 0,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": []
+ },
+ "corpus/negatives/human-malware/ld_preload_line.sh": {
+  "score": 0,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": []
+ },
+ "corpus/negatives/human-malware/mysql_dump_oneliner.sh": {
+  "score": 0,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": []
+ },
+ "corpus/negatives/human-malware/nc_bind.sh": {
   "score": 0,
   "verdict": "clear",
   "decoded": false,
@@ -211,7 +656,25 @@
   "decoded": false,
   "signals": []
  },
+ "corpus/negatives/human-malware/ssh_key_add.sh": {
+  "score": 0,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": []
+ },
+ "corpus/negatives/human-malware/sudoers_oneliner.sh": {
+  "score": 0,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": []
+ },
  "corpus/negatives/human-malware/webshell.php": {
+  "score": 0,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": []
+ },
+ "corpus/negatives/human-malware/wget_run.sh": {
   "score": 0,
   "verdict": "clear",
   "decoded": false,
@@ -237,6 +700,17 @@
    "plan_act_observe"
   ]
  },
+ "corpus/windows-powershell/agentic_persistence_schtask.ps1": {
+  "score": 0.7135,
+  "verdict": "block",
+  "decoded": false,
+  "signals": [
+   "agent_first_person",
+   "intent_commentary_density",
+   "plan_act_observe",
+   "roi_target_prioritization"
+  ]
+ },
  "corpus/windows-powershell/agentic_recon_ad.ps1": {
   "score": 0.6321,
   "verdict": "block",
@@ -247,7 +721,35 @@
    "roi_target_prioritization"
   ]
  },
+ "corpus/windows-powershell/agentic_retry_after_edr.ps1": {
+  "score": 0.6321,
+  "verdict": "block",
+  "decoded": false,
+  "signals": [
+   "agent_first_person",
+   "plan_act_observe",
+   "roi_target_prioritization"
+  ]
+ },
+ "corpus/windows-powershell/benign_ad_user_report.ps1": {
+  "score": 0,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": []
+ },
  "corpus/windows-powershell/benign_admin_maintenance.ps1": {
+  "score": 0,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": []
+ },
+ "corpus/windows-powershell/benign_backup_verify.ps1": {
+  "score": 0,
+  "verdict": "clear",
+  "decoded": false,
+  "signals": []
+ },
+ "corpus/windows-powershell/terse_encoded_cradle.ps1": {
   "score": 0,
   "verdict": "clear",
   "decoded": false,

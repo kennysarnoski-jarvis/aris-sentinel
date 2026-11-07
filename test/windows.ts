@@ -21,7 +21,10 @@ const EXPECT: Record<string, "catch" | "clear"> = {
   "agentic_lateral_pth.ps1": "catch",
   "agentic_exfil_stage.ps1": "catch",
   "benign_admin_maintenance.ps1": "clear",
+  "benign_ad_user_report.ps1": "clear",
+  "benign_backup_verify.ps1": "clear",
   "terse_malware_cradle.ps1": "clear",
+  "terse_encoded_cradle.ps1": "clear",
 };
 
 console.log("\n  WINDOWS / POWERSHELL GENERALIZATION  (same brain, never tuned on PowerShell)\n");

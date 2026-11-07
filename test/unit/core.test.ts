@@ -100,11 +100,11 @@ describe("providers", () => {
     expect(providers({ ANTHROPIC_API_KEY: "a", KIMI_API_KEY: "k" }).map((p) => p.name)).toEqual(["anthropic", "kimi"]);
   });
 
-  test("the Anthropic leg: Opus 5.5, fallbacks on, two prompts (SYSTEM then de-fanged)", () => {
+  test("the Anthropic leg: Opus 5.5, fallbacks on, two prompts (two-criteria first, original as retry)", () => {
     const p = providers({ ANTHROPIC_API_KEY: "a" })[0];
     expect(p).toMatchObject({ name: "anthropic", wire: "anthropic", url: "https://api.anthropic.com/v1/messages", model: "claude-opus-5-5", fallbacks: true });
     expect(p.headers["x-api-key"]).toBe("a");
-    expect(p.attempts.map((x) => x.system)).toEqual([SYSTEM, SYSTEM_AUTHORSHIP]);
+    expect(p.attempts.map((x) => x.system)).toEqual([SYSTEM_AUTHORSHIP, SYSTEM]);
     expect(p.effort).toBeUndefined();
   });
 
@@ -125,7 +125,7 @@ describe("providers", () => {
   test("the local leg: loopback OpenAI-wire endpoint, no key needed", () => {
     const p = providers({ OPENAI_BASE_URL: "http://localhost:11434/v1/", OPENAI_MODEL: "llama3.1" })[0];
     expect(p).toMatchObject({ name: "local", wire: "openai", url: "http://localhost:11434/v1/chat/completions", model: "llama3.1", headers: {} });
-    expect(p.attempts.map((x) => x.system)).toEqual([SYSTEM, SYSTEM_AUTHORSHIP]);
+    expect(p.attempts.map((x) => x.system)).toEqual([SYSTEM_AUTHORSHIP, SYSTEM]);
     expect(providers({ OPENAI_BASE_URL: "http://[::1]:8000/v1", OPENAI_MODEL: "m" })[0].name).toBe("local");
   });
 
@@ -151,7 +151,7 @@ describe("providers", () => {
     const p = providers({ KIMI_API_KEY: "k" })[0];
     expect(p).toMatchObject({ name: "kimi", wire: "anthropic", url: "https://api.kimi.com/coding/v1/messages", model: "k3" });
     expect(p.headers.authorization).toBe("Bearer k");
-    expect(p.attempts).toHaveLength(1);
+    expect(p.attempts).toEqual([{ system: SYSTEM_AUTHORSHIP }]);
     const q = providers({ KIMI_API_KEY: "k", KIMI_BASE_URL: "http://localhost:9/", KIMI_MODEL: "k9", ANTHROPIC_API_KEY: "a", ANTHROPIC_BASE_URL: "http://proxy/", ARIS_MODEL: "m" });
     expect(q.map((p) => [p.name, p.url, p.model])).toEqual([["anthropic", "http://proxy/v1/messages", "m"], ["kimi", "http://localhost:9/v1/messages", "k9"]]);
   });
@@ -240,7 +240,7 @@ describe("adjudicate: provider chain", () => {
     expect(urls).toEqual(["http://127.0.0.1:11434/v1/chat/completions"]);
   });
 
-  test("local (2 prompts) → anthropic SYSTEM → anthropic de-fanged → kimi, in that order, until one answers", async () => {
+  test("local (2 prompts) → anthropic (2 prompts) → kimi, two-criteria prompt first each time, until one answers", async () => {
     const calls: { url: string; system: string; fallbacks: unknown }[] = [];
     const f = async (url: string, init: any) => {
       const body = JSON.parse(init.body);
@@ -259,7 +259,7 @@ describe("adjudicate: provider chain", () => {
       "https://api.anthropic.com/v1/messages",
       "https://api.kimi.com/coding/v1/messages",
     ]);
-    expect(calls.map((c) => c.system)).toEqual([SYSTEM, SYSTEM_AUTHORSHIP, SYSTEM, SYSTEM_AUTHORSHIP, SYSTEM]);
+    expect(calls.map((c) => c.system)).toEqual([SYSTEM_AUTHORSHIP, SYSTEM, SYSTEM_AUTHORSHIP, SYSTEM, SYSTEM_AUTHORSHIP]);
     expect(calls.map((c) => c.fallbacks)).toEqual([undefined, undefined, "default", "default", undefined]);
   });
 

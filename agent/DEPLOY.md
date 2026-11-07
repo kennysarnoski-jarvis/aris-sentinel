@@ -33,7 +33,7 @@ silently allowed. Put the key in a root-only env file — never in the unit or p
 # Claude Opus 5.5 (server-side fallbacks on classifier refusals, de-fanged retry):
 printf 'ANTHROPIC_API_KEY=%s\n' 'sk-ant-...' | sudo tee /etc/aris-sentinel.env >/dev/null
 sudo chmod 600 /etc/aris-sentinel.env
-# …or a local judge, nothing leaves the box (Ollama on the host, any instruct model):
+# …or a local judge, nothing leaves the box (Ollama on the host; qwen2.5:14b went 74/74 on the corpus):
 printf 'OPENAI_BASE_URL=http://127.0.0.1:11434/v1\nOPENAI_MODEL=qwen2.5:14b\n' | sudo tee -a /etc/aris-sentinel.env >/dev/null
 ```
 Both may be set: the chain is `local → anthropic → openai → kimi` (`ARIS_TIER2_ORDER`

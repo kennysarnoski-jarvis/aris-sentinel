@@ -9,6 +9,8 @@ Autonomous LLM agents now run intrusions end to end: recon, credential theft, la
 
 Aris Sentinel is a small runtime agent (plain Node ≥ 18, zero dependencies, Apache-2.0) that watches what is about to execute on a server, decodes it, and scores it for the signature of an AI narrating its own attack. It runs in monitor mode by default. Arm it, and it kills the process tree at the first narrated step, phases before anything is encrypted.
 
+![bun run score: an agent's attack step is BLOCKed with its narration quoted as evidence; a human reverse shell is CLEAR; a base64-wrapped payload is caught in a decoded layer](docs/demo-score.gif)
+
 ## The tell, in one screen
 
 A JADEPUFFER-style step, as captured:
@@ -103,7 +105,7 @@ exec / script-block  ─►  decode (base64 · hex · nested)  ─►  tier 1: n
 
 | judge | config | why you'd pick it |
 |---|---|---|
-| **local** | `OPENAI_BASE_URL=http://127.0.0.1:11434/v1` + `OPENAI_MODEL` (Ollama, vLLM, llama.cpp) | nothing leaves the box; first in the chain by default |
+| **local** | `OPENAI_BASE_URL=http://127.0.0.1:11434/v1` + `OPENAI_MODEL` (Ollama, vLLM, llama.cpp) | nothing leaves the box; first in the chain by default. `qwen2.5:14b` went 74/74 on the corpus |
 | **anthropic** | `ANTHROPIC_API_KEY` (Claude Opus 5.5) | strongest judgment; server-side fallbacks on classifier refusals |
 | **openai** | `OPENAI_API_KEY` + `OPENAI_MODEL`, or any remote OpenAI-compatible `OPENAI_BASE_URL` | bring your own |
 | **kimi** | `KIMI_API_KEY` (Kimi K3) | no cyber input screen |
@@ -135,7 +137,7 @@ Numbers from the labeled corpus, measured with the detector frozen *before* the 
 
 **The limit, stated plainly:** an agent told not to narrate is invisible to this. Zero narration is zero signal. Tier 2 narrows that gap and cannot close it. The stress test of a mutating attacker (`test/loop/`) caught 4 of 6 attempts; the two that evaded had suppressed their narration and achieved nothing real.
 
-Tier 2 has been measured on the original corpus (Kimi K3 and Claude Opus 4.8, 2026-07: 5/5 novel attacks caught, 0/12 false positives). It has not yet been re-measured on the expanded corpus or the current judge chain. `bun run matrix` and `bun run pipeline` do that with a key.
+**With a judge, measured live (2026-11-07, local `qwen2.5:14b` through Ollama, nothing leaving the machine):** the full pipeline went **74/74**: all 28 agentic files blocked (17 at tier 1, 11 convicted by the judge), all 40 benign files allowed, 0/12 on the adversarial false-positive set, 5/5 on the novel attacks. The judge matrix also showed *why the prompt matters*: with the original prompt a 14B model convicts anything plan-shaped; with the two-criteria prompt (AI authorship *and* malicious intent) it is 8/8. That prompt now leads on every judge. One model, one day; the harnesses re-run on whatever you deploy.
 
 ## Run it for real
 
@@ -148,7 +150,7 @@ Off-box alerting is optional. The agent can POST incidents to any receiver you p
 
 ## The guardrail problem
 
-A hosted model's safety classifier screens request *content*, not purpose. Ask it to label a captured attack payload and the classifier can decline before the model reads the question. In July 2026 Anthropic's real-time cyber screen refused 6 of 6 escalations on *benign* Terraform and Docker files that merely used security vocabulary. That is why the judge chain exists, and why three things are built in: a de-fanged prompt that frames the request as labeling inert evidence, Anthropic's server-side fallbacks (a cyber-category decline is re-run on the model they recommend, inside the same call), and a local judge that has no screen at all. Security vendors can also apply to Anthropic's [Cyber Verification Program](https://support.claude.com/en/articles/14604842-real-time-cyber-safeguards-on-claude-opus-and-sonnet).
+A hosted model's safety classifier screens request *content*, not purpose. Ask it to label a captured attack payload and the classifier can decline before the model reads the question. In July 2026 Anthropic's real-time cyber screen refused 6 of 6 escalations on *benign* Terraform and Docker files that merely used security vocabulary. That is why the judge chain exists, and why three things are built in: a prompt that frames the request as labeling inert evidence and requires both AI authorship and malicious intent (the same prompt that stops a small local model from convicting every plan-shaped runbook), Anthropic's server-side fallbacks (a cyber-category decline is re-run on the model they recommend, inside the same call), and a local judge that has no screen at all. Security vendors can also apply to Anthropic's [Cyber Verification Program](https://support.claude.com/en/articles/14604842-real-time-cyber-safeguards-on-claude-opus-and-sonnet).
 
 ## Configuration
 

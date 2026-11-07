@@ -2,7 +2,7 @@
 
 Defensive runtime agent: detects autonomous-LLM attackers on a host by their
 self-narration, and alerts or kills before the destructive step. See README.md for
-architecture and THESIS.md for positioning. HANDOFF.md records the 2026-11-07
+architecture and docs/THESIS.md for positioning. docs/HANDOFF.md records the 2026-11-07
 reliability fixes and what is still unverified live.
 
 ## The one rule about the detector
@@ -14,9 +14,10 @@ intentional change, and commit the diff. New corpus samples are scored BEFORE an
 change and the result recorded in corpus/README.md (see its rules).
 
 ## Commands (key-free)
+- `bun run score <file>`: score a file the way the agent would (verdict, signals, evidence)
 - `bun run test:all`: everything below in one go
 - `bun run test`: tier-1 corpus (expect precision 1.00, tier-1 recall 0.61, pipeline-reachable recall 1.00, FP=0)
-- `bun test`: unit tests (expect 183 pass)
+- `bun test`: unit tests (expect 190 pass)
 - `bun run typecheck`: tsc over detector/ and test/ (expect clean)
 - `bun run windows`: PowerShell corpus (expect 10/10)
 - `bun run pipeline:stub`: two-tier routing (expect 6/6)

@@ -90,9 +90,15 @@ const COMMENT_LINE = /^\s*(#|\/\/|--|\/\*|\*)/;
 const WHY_COMMENT =
   /\b(so that|because|in order to|to maximize|for maximum|to avoid|to bypass|for reuse|staging (harvested|the )?(creds|credentials)|priority target|highest value|likely holds|for lateral movement|to identify)\b/i;
 
+// Evidence snippet: from the match to the next word boundary within ~100 chars, so an
+// incident (or `bun run score`) quotes the attacker's words, not a mid-word fragment.
 function snippet(text, idx) {
-  const start = Math.max(0, idx - 12);
-  return text.slice(start, start + 110).replace(/\s+/g, " ").trim();
+  let s = text.slice(idx, idx + 100).replace(/\s+/g, " ").trim();
+  if (idx + 100 < text.length) {
+    const cut = s.lastIndexOf(" ");
+    if (cut > 60) s = s.slice(0, cut) + "…";
+  }
+  return s;
 }
 
 /** Every feature hit in `text`, one per matching pattern, with an evidence snippet. */

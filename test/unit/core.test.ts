@@ -8,11 +8,17 @@ import {
   createGovernor,
   decide,
   failClosed,
+  fallbackCapable,
+  FALLBACK_BETA,
   hasTier2,
   inspect,
   normalizeVerdict,
   parseVerdict,
   providers,
+  providerWarnings,
+  SYSTEM,
+  SYSTEM_AUTHORSHIP,
+  USER,
   type Adjudication,
   type Provider,
 } from "../../agent/sentinel-core.mjs";
@@ -32,8 +38,8 @@ const CLEAR = `python3 manage.py migrate --noinput`;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const abortingFetch = ((_url: string, init: any) =>
   new Promise<Response>((_, rej) => init.signal.addEventListener("abort", () => rej(Object.assign(new Error("aborted"), { name: "AbortError" }))))) as any;
-const reply = (text: string, status = 200, stop_reason = "end_turn") =>
-  ({ ok: status < 400, status, json: async () => ({ stop_reason, content: [{ type: "text", text }] }) }) as unknown as Response;
+const reply = (text: string, status = 200, stop_reason = "end_turn", model?: string) =>
+  ({ ok: status < 400, status, json: async () => ({ ...(model ? { model } : {}), stop_reason, content: [{ type: "text", text }] }) }) as unknown as Response;
 
 test("tier-1 bands are where the tests assume", () => {
   expect(inspect(ESCALATE).verdict).toBe("escalate");
@@ -64,6 +70,10 @@ describe("verdict validation", () => {
     expect(normalizeVerdict([1])).toBeNull();
     expect(normalizeVerdict("agentic")).toBeNull();
   });
+  test("a string model name is kept, anything else dropped", () => {
+    expect(normalizeVerdict({ agentic: true, confidence: 1, reasoning: "x", model: "claude-opus-4-8" })?.model).toBe("claude-opus-4-8");
+    expect(normalizeVerdict({ agentic: true, confidence: 1, reasoning: "x", model: 7 })?.model).toBeUndefined();
+  });
   test("missing reasoning becomes empty string (cosmetic field)", () => {
     expect(normalizeVerdict({ agentic: false, confidence: 0.2 })?.reasoning).toBe("");
   });
@@ -77,138 +87,237 @@ describe("verdict validation", () => {
 });
 
 describe("providers", () => {
-  test("no keys → no tier 2", () => {
+  const ALL = { ANTHROPIC_API_KEY: "a", KIMI_API_KEY: "k", OPENAI_BASE_URL: "http://127.0.0.1:11434/v1", OPENAI_MODEL: "qwen2.5:14b" };
+
+  test("nothing configured → no tier 2", () => {
     expect(providers({})).toEqual([]);
     expect(hasTier2({})).toBe(false);
+    expect(providerWarnings({})).toEqual([]);
   });
-  test("Kimi first, Anthropic second; Anthropic gets a thinking attempt then a plain one", () => {
-    const p = providers({ KIMI_API_KEY: "k", ANTHROPIC_API_KEY: "a" });
-    expect(p.map((x) => x.name)).toEqual(["kimi", "anthropic"]);
-    expect(p[0].url).toBe("https://api.kimi.com/coding/v1/messages");
-    expect(p[0].headers.authorization).toBe("Bearer k");
-    expect(p[0].model).toBe("k3");
-    expect(p[0].attempts).toEqual([{ thinking: false }]);
-    expect(p[1].url).toBe("https://api.anthropic.com/v1/messages");
-    expect(p[1].headers["x-api-key"]).toBe("a");
-    expect(p[1].model).toBe("claude-opus-4-8");
-    expect(p[1].attempts).toEqual([{ thinking: true }, { thinking: false }]);
+
+  test("default order: local → anthropic → openai → kimi, unconfigured legs skipped", () => {
+    expect(providers(ALL).map((p) => p.name)).toEqual(["local", "anthropic", "kimi"]);
+    expect(providers({ ANTHROPIC_API_KEY: "a", KIMI_API_KEY: "k" }).map((p) => p.name)).toEqual(["anthropic", "kimi"]);
   });
-  test("env overrides for base URLs and models", () => {
-    const p = providers({ KIMI_API_KEY: "k", KIMI_BASE_URL: "http://localhost:9/", KIMI_MODEL: "k9", ANTHROPIC_API_KEY: "a", ANTHROPIC_BASE_URL: "http://proxy/", ARIS_MODEL: "m" });
-    expect(p[0].url).toBe("http://localhost:9/v1/messages");
-    expect(p[0].model).toBe("k9");
-    expect(p[1].url).toBe("http://proxy/v1/messages");
-    expect(p[1].model).toBe("m");
+
+  test("the Anthropic leg: Opus 5.5, fallbacks on, two prompts (SYSTEM then de-fanged)", () => {
+    const p = providers({ ANTHROPIC_API_KEY: "a" })[0];
+    expect(p).toMatchObject({ name: "anthropic", wire: "anthropic", url: "https://api.anthropic.com/v1/messages", model: "claude-opus-5-5", fallbacks: true });
+    expect(p.headers["x-api-key"]).toBe("a");
+    expect(p.attempts.map((x) => x.system)).toEqual([SYSTEM, SYSTEM_AUTHORSHIP]);
+    expect(p.effort).toBeUndefined();
+  });
+
+  test("Anthropic knobs: ARIS_MODEL, effort, fallbacks off, no fallbacks on Haiku / 4.x", () => {
+    expect(providers({ ANTHROPIC_API_KEY: "a", ARIS_MODEL: "claude-haiku-5-5" })[0]).toMatchObject({ model: "claude-haiku-5-5", fallbacks: false });
+    expect(providers({ ANTHROPIC_API_KEY: "a", ARIS_MODEL: "claude-opus-4-8" })[0].fallbacks).toBe(false);
+    expect(providers({ ANTHROPIC_API_KEY: "a", ARIS_MODEL: "claude-sonnet-5-5" })[0].fallbacks).toBe(true);
+    expect(providers({ ANTHROPIC_API_KEY: "a", ARIS_TIER2_FALLBACKS: "0" })[0].fallbacks).toBe(false);
+    expect(providers({ ANTHROPIC_API_KEY: "a", ARIS_TIER2_EFFORT: "low" })[0].effort).toBe("low");
+    expect(providers({ ANTHROPIC_API_KEY: "a", ARIS_TIER2_EFFORT: "turbo" })[0].effort).toBeUndefined();
+    expect(providerWarnings({ ANTHROPIC_API_KEY: "a", ARIS_TIER2_EFFORT: "turbo" })[0]).toContain("ARIS_TIER2_EFFORT");
+    expect(fallbackCapable("claude-opus-5-5")).toBe(true);
+    expect(fallbackCapable("claude-fable-5-1")).toBe(true);
+    expect(fallbackCapable("claude-haiku-5-5")).toBe(false);
+    expect(fallbackCapable(undefined)).toBe(false);
+  });
+
+  test("the local leg: loopback OpenAI-wire endpoint, no key needed", () => {
+    const p = providers({ OPENAI_BASE_URL: "http://localhost:11434/v1/", OPENAI_MODEL: "llama3.1" })[0];
+    expect(p).toMatchObject({ name: "local", wire: "openai", url: "http://localhost:11434/v1/chat/completions", model: "llama3.1", headers: {} });
+    expect(p.attempts.map((x) => x.system)).toEqual([SYSTEM, SYSTEM_AUTHORSHIP]);
+    expect(providers({ OPENAI_BASE_URL: "http://[::1]:8000/v1", OPENAI_MODEL: "m" })[0].name).toBe("local");
+  });
+
+  test("the openai leg: api.openai.com by default, or any remote OpenAI-compatible URL", () => {
+    const p = providers({ OPENAI_API_KEY: "o", OPENAI_MODEL: "gpt-x" })[0];
+    expect(p).toMatchObject({ name: "openai", wire: "openai", url: "https://api.openai.com/v1/chat/completions", model: "gpt-x" });
+    expect(p.headers.authorization).toBe("Bearer o");
+    expect(providers({ OPENAI_API_KEY: "o", OPENAI_BASE_URL: "https://llm.corp.example/v1", OPENAI_MODEL: "m" })[0].name).toBe("openai");
+  });
+
+  test("openai-wire without OPENAI_MODEL is disabled, with a warning", () => {
+    expect(providers({ OPENAI_BASE_URL: "http://127.0.0.1:11434/v1" })).toEqual([]);
+    expect(providerWarnings({ OPENAI_BASE_URL: "http://127.0.0.1:11434/v1" })[0]).toContain("OPENAI_MODEL");
+  });
+
+  test("ARIS_TIER2_ORDER reorders the chain and drops unknown names (with a warning)", () => {
+    expect(providers({ ...ALL, ARIS_TIER2_ORDER: "kimi, anthropic" }).map((p) => p.name)).toEqual(["kimi", "anthropic"]);
+    expect(providers({ ...ALL, ARIS_TIER2_ORDER: "bogus,local" }).map((p) => p.name)).toEqual(["local"]);
+    expect(providerWarnings({ ...ALL, ARIS_TIER2_ORDER: "bogus,local" })[0]).toContain('"bogus"');
+  });
+
+  test("the Kimi leg: Anthropic wire, Bearer, one attempt, env overrides", () => {
+    const p = providers({ KIMI_API_KEY: "k" })[0];
+    expect(p).toMatchObject({ name: "kimi", wire: "anthropic", url: "https://api.kimi.com/coding/v1/messages", model: "k3" });
+    expect(p.headers.authorization).toBe("Bearer k");
+    expect(p.attempts).toHaveLength(1);
+    const q = providers({ KIMI_API_KEY: "k", KIMI_BASE_URL: "http://localhost:9/", KIMI_MODEL: "k9", ANTHROPIC_API_KEY: "a", ANTHROPIC_BASE_URL: "http://proxy/", ARIS_MODEL: "m" });
+    expect(q.map((p) => [p.name, p.url, p.model])).toEqual([["anthropic", "http://proxy/v1/messages", "m"], ["kimi", "http://localhost:9/v1/messages", "k9"]]);
   });
 });
 
 describe("attempt", () => {
   const base = { url: "http://x/v1/messages", headers: { "x-api-key": "a" }, model: "m" };
-  test("returns the validated verdict", async () => {
-    const f = async () => reply('{"agentic": true, "confidence": 0.8, "reasoning": "narrates"}');
-    expect(await attempt("p", { ...base, fetch: f as any })).toEqual({ ok: { agentic: true, confidence: 0.8, reasoning: "narrates" } });
+  test("returns the validated verdict, with the serving model", async () => {
+    const f = async () => reply('{"agentic": true, "confidence": 0.8, "reasoning": "narrates"}', 200, "end_turn", "claude-opus-4-8");
+    expect(await attempt("p", { ...base, fetch: f as any })).toEqual({ ok: { agentic: true, confidence: 0.8, reasoning: "narrates", model: "claude-opus-4-8" } });
   });
   test("times out → stop=timeout (never throws)", async () => {
-    const r = await attempt("p", { ...base, fetch: abortingFetch, timeoutMs: 15 });
-    expect(r).toEqual({ stop: "timeout" });
+    expect(await attempt("p", { ...base, fetch: abortingFetch, timeoutMs: 15 })).toEqual({ stop: "timeout" });
   });
   test("http error → stop=http:<status>", async () => {
     expect(await attempt("p", { ...base, fetch: (async () => reply("", 529)) as any })).toEqual({ stop: "http:529" });
   });
-  test("refusal with no JSON → stop=<stop_reason>", async () => {
-    expect(await attempt("p", { ...base, fetch: (async () => reply("I can't.", 200, "refusal")) as any })).toEqual({ stop: "refusal" });
+  test("a classifier refusal → stop=refusal:<category>; a model refusal → refusal:model", async () => {
+    const cls = async () => ({ ok: true, status: 200, json: async () => ({ stop_reason: "refusal", stop_details: { type: "refusal", category: "cyber" }, content: [] }) }) as any;
+    expect(await attempt("p", { ...base, fetch: cls as any })).toEqual({ stop: "refusal:cyber" });
+    const plain = async () => ({ ok: true, status: 200, json: async () => ({ stop_reason: "refusal", stop_details: null, content: [] }) }) as any;
+    expect(await attempt("p", { ...base, fetch: plain as any })).toEqual({ stop: "refusal:model" });
   });
-  test("malformed verdict → stop=invalid-verdict", async () => {
-    expect(await attempt("p", { ...base, fetch: (async () => reply('{"agentic": "maybe"}', 200, "end_turn")) as any })).toEqual({ stop: "end_turn" });
+  test("no JSON → stop=<stop_reason>, or invalid-verdict when there is none", async () => {
+    expect(await attempt("p", { ...base, fetch: (async () => reply("I can't.", 200, "end_turn")) as any })).toEqual({ stop: "end_turn" });
     expect(await attempt("p", { ...base, fetch: (async () => reply('{"agentic": "maybe"}', 200, "")) as any })).toEqual({ stop: "invalid-verdict" });
   });
   test("network error → stop=error:…", async () => {
     const f = async () => { throw new Error("ECONNREFUSED"); };
     expect(await attempt("p", { ...base, fetch: f as any })).toEqual({ stop: "error:ECONNREFUSED" });
   });
-  test("sends the Anthropic wire shape, thinking only when asked", async () => {
+  test("Anthropic wire: version header, adaptive thinking by default, effort, fallbacks + beta header only when asked", async () => {
     const calls: any[] = [];
     const f = async (url: string, init: any) => { calls.push({ url, headers: init.headers, body: JSON.parse(init.body) }); return reply('{"agentic": false, "confidence": 0.1, "reasoning": ""}'); };
-    await attempt("payload text", { ...base, thinking: true, fetch: f as any });
-    await attempt("payload text", { ...base, thinking: false, fetch: f as any });
-    expect(calls[0].headers["anthropic-version"]).toBe("2023-06-01");
-    expect(calls[0].headers["x-api-key"]).toBe("a");
-    expect(calls[0].body.thinking).toEqual({ type: "adaptive" });
+    await attempt("payload text", { ...base, fetch: f as any });
+    await attempt("payload text", { ...base, thinking: false, effort: "low", fallbacks: true, fetch: f as any });
+    expect(calls[0].headers).toMatchObject({ "anthropic-version": "2023-06-01", "x-api-key": "a" });
+    expect(calls[0].headers["anthropic-beta"]).toBeUndefined();
+    expect(calls[0].body).toMatchObject({ model: "m", max_tokens: 4000, thinking: { type: "adaptive" }, system: SYSTEM });
+    expect(calls[0].body.fallbacks).toBeUndefined();
+    expect(calls[0].body.output_config).toBeUndefined();
     expect(calls[0].body.messages[0].content).toContain("payload text");
+    expect(calls[1].headers["anthropic-beta"]).toBe(FALLBACK_BETA);
     expect(calls[1].body.thinking).toBeUndefined();
+    expect(calls[1].body).toMatchObject({ output_config: { effort: "low" }, fallbacks: "default" });
+  });
+  test("OpenAI wire: /chat/completions shape, bearer, JSON mode, string or array content, refusal, finish_reason", async () => {
+    const calls: any[] = [];
+    let mode = "string";
+    const f = async (url: string, init: any) => {
+      calls.push({ url, headers: init.headers, body: JSON.parse(init.body) });
+      const msg =
+        mode === "string" ? { content: '{"agentic": true, "confidence": 0.9, "reasoning": "r"}' }
+        : mode === "array" ? { content: [{ type: "text", text: '{"agentic": false, "confidence": "0.2", "reasoning": "x"}' }] }
+        : mode === "refusal" ? { content: null, refusal: "no" }
+        : { content: "not json" };
+      return { ok: true, status: 200, json: async () => ({ model: "qwen2.5:14b", choices: [{ message: msg, finish_reason: mode === "length" ? "length" : "stop" }] }) } as any;
+    };
+    const oa = { url: "http://127.0.0.1:11434/v1/chat/completions", headers: { authorization: "Bearer o" }, model: "qwen2.5:14b", wire: "openai" as const, system: SYSTEM_AUTHORSHIP, fetch: f as any };
+    expect(await attempt("payload text", oa)).toEqual({ ok: { agentic: true, confidence: 0.9, reasoning: "r", model: "qwen2.5:14b" } });
+    expect(calls[0].headers).toMatchObject({ "content-type": "application/json", authorization: "Bearer o" });
+    expect(calls[0].headers["anthropic-version"]).toBeUndefined();
+    expect(calls[0].body).toMatchObject({ model: "qwen2.5:14b", response_format: { type: "json_object" } });
+    expect(calls[0].body.messages).toEqual([{ role: "system", content: SYSTEM_AUTHORSHIP }, { role: "user", content: USER("payload text") }]);
+    expect(calls[0].body.max_tokens).toBeUndefined();
+    mode = "array";
+    expect(await attempt("p", oa)).toEqual({ ok: { agentic: false, confidence: 0.2, reasoning: "x", model: "qwen2.5:14b" } });
+    mode = "refusal";
+    expect(await attempt("p", oa)).toEqual({ stop: "refusal:model" });
+    mode = "length";
+    expect(await attempt("p", oa)).toEqual({ stop: "length" });
   });
 });
 
 describe("adjudicate: provider chain", () => {
-  const env = { KIMI_API_KEY: "k", ANTHROPIC_API_KEY: "a" };
+  const env = { ANTHROPIC_API_KEY: "a", KIMI_API_KEY: "k", OPENAI_BASE_URL: "http://127.0.0.1:11434/v1", OPENAI_MODEL: "qwen" };
+  const ok = '{"agentic": true, "confidence": 0.9, "reasoning": "r"}';
+  const benign = '{"agentic": false, "confidence": 0.3, "reasoning": "benign"}';
+  const oaReply = (text: string) => ({ ok: true, status: 200, json: async () => ({ model: "qwen", choices: [{ message: { content: text }, finish_reason: "stop" }] }) }) as any;
 
-  test("Kimi answers → Anthropic never called", async () => {
+  test("the local judge answers → nobody else is called", async () => {
     const urls: string[] = [];
-    const f = async (url: string) => { urls.push(url); return reply('{"agentic": true, "confidence": 0.9, "reasoning": "r"}'); };
+    const f = async (url: string) => { urls.push(url); return oaReply(ok); };
     const v = await adjudicate("p", { env, fetch: f as any });
-    expect(v).toEqual({ agentic: true, confidence: 0.9, reasoning: "r" });
-    expect(urls).toEqual(["https://api.kimi.com/coding/v1/messages"]);
+    expect(v).toEqual({ agentic: true, confidence: 0.9, reasoning: "r", model: "qwen" });
+    expect(urls).toEqual(["http://127.0.0.1:11434/v1/chat/completions"]);
   });
 
-  test("Kimi invalid → Anthropic thinking → Anthropic plain, in that order", async () => {
-    const calls: { url: string; thinking: boolean }[] = [];
+  test("local (2 prompts) → anthropic SYSTEM → anthropic de-fanged → kimi, in that order, until one answers", async () => {
+    const calls: { url: string; system: string; fallbacks: unknown }[] = [];
     const f = async (url: string, init: any) => {
       const body = JSON.parse(init.body);
-      calls.push({ url, thinking: !!body.thinking });
-      if (calls.length === 1) return reply("no json here");
-      if (calls.length === 2) return reply("", 529);
-      return reply('{"agentic": false, "confidence": 0.3, "reasoning": "benign"}');
+      calls.push({ url, system: body.system ?? body.messages[0].content, fallbacks: body.fallbacks });
+      if (calls.length <= 2) return oaReply("nope");
+      if (calls.length === 3) return reply("", 529);
+      if (calls.length === 4) return reply("I decline.", 200, "end_turn");
+      return reply(benign, 200, "end_turn", "k3");
     };
     const v = await adjudicate("p", { env, fetch: f as any });
-    expect(v).toEqual({ agentic: false, confidence: 0.3, reasoning: "benign" });
-    expect(calls).toEqual([
-      { url: "https://api.kimi.com/coding/v1/messages", thinking: false },
-      { url: "https://api.anthropic.com/v1/messages", thinking: true },
-      { url: "https://api.anthropic.com/v1/messages", thinking: false },
+    expect(v).toEqual({ agentic: false, confidence: 0.3, reasoning: "benign", model: "k3" });
+    expect(calls.map((c) => c.url)).toEqual([
+      "http://127.0.0.1:11434/v1/chat/completions",
+      "http://127.0.0.1:11434/v1/chat/completions",
+      "https://api.anthropic.com/v1/messages",
+      "https://api.anthropic.com/v1/messages",
+      "https://api.kimi.com/coding/v1/messages",
     ]);
+    expect(calls.map((c) => c.system)).toEqual([SYSTEM, SYSTEM_AUTHORSHIP, SYSTEM, SYSTEM_AUTHORSHIP, SYSTEM]);
+    expect(calls.map((c) => c.fallbacks)).toEqual([undefined, undefined, "default", "default", undefined]);
+  });
+
+  test("a classifier refusal on both Claude attempts moves on and is named in the fail-closed reason", async () => {
+    const cls = { ok: true, status: 200, json: async () => ({ stop_reason: "refusal", stop_details: { category: "cyber" }, content: [] }) } as any;
+    const f = async (url: string) => (url.includes("anthropic") ? cls : reply("", 500));
+    const v = await adjudicate("p", { env: { ANTHROPIC_API_KEY: "a", KIMI_API_KEY: "k" }, fetch: f as any });
+    expect(v.refused).toBe(true);
+    expect(v.reasoning).toContain("anthropic1=refusal:cyber, anthropic2=refusal:cyber, kimi=http:500");
   });
 
   test("everyone fails → fail-closed with every stop named", async () => {
-    let n = 0;
-    const f = async () => (++n === 1 ? reply("nope", 200, "") : reply("", 500));
+    const f = async (url: string) => (url.includes("11434") ? oaReply("nope") : reply("", 500));
     const v = await adjudicate("p", { env, fetch: f as any });
     expect(v.refused).toBe(true);
     expect(v.agentic).toBe(true);
-    expect(v.reasoning).toContain("kimi=invalid-verdict, anthropic1=http:500, anthropic2=http:500");
+    expect(v.reasoning).toContain("local1=stop, local2=stop, anthropic1=http:500, anthropic2=http:500, kimi=http:500");
   });
 
-  test("no key → fail-closed, says so", async () => {
+  test("no judge configured → fail-closed, says so", async () => {
     const v = await adjudicate("p", { env: {}, fetch: (async () => reply("x")) as any });
     expect(v.refused).toBe(true);
     expect(v.reasoning).toContain("no provider key configured");
   });
 
-  test("a hung provider times out and the chain moves on", async () => {
+  test("a hung judge times out and the chain moves on", async () => {
     let n = 0;
-    const f = (url: string, init: any) => (++n === 1 ? abortingFetch(url, init) : Promise.resolve(reply('{"agentic": true, "confidence": 0.7, "reasoning": "r"}')));
-    const v = await adjudicate("p", { env, fetch: f as any, timeoutMs: 10, deadlineMs: 5000 });
-    expect(v).toEqual({ agentic: true, confidence: 0.7, reasoning: "r" });
+    const f = (url: string, init: any) => (++n === 1 ? abortingFetch(url, init) : Promise.resolve(reply(ok)));
+    const v = await adjudicate("p", { env: { ANTHROPIC_API_KEY: "a" }, fetch: f as any, timeoutMs: 10, deadlineMs: 5000 });
+    expect(v).toMatchObject({ agentic: true, confidence: 0.9 });
     expect(n).toBe(2);
   });
 
   test("the overall deadline caps the chain and lands fail-closed", async () => {
-    const f = async (_u: string, init: any) => { await sleep(40); if (init.signal.aborted) throw Object.assign(new Error("a"), { name: "AbortError" }); return reply('{"agentic": true, "confidence": 0.7, "reasoning": "r"}'); };
+    const f = async (_u: string, init: any) => { await sleep(40); if (init.signal.aborted) throw Object.assign(new Error("a"), { name: "AbortError" }); return reply(ok); };
     const v = await adjudicate("p", { env, fetch: f as any, timeoutMs: 1000, deadlineMs: 20 });
     expect(v.refused).toBe(true);
     expect(v.reasoning).toMatch(/timeout|deadline/);
   });
 
-  test("model override only touches the Anthropic leg", async () => {
-    const models: string[] = [];
-    const f = async (_u: string, init: any) => { models.push(JSON.parse(init.body).model); return models.length === 1 ? reply("x") : reply('{"agentic": false, "confidence": 0.1, "reasoning": ""}'); };
-    await adjudicate("p", { env, fetch: f as any, model: "claude-haiku-4-5" });
-    expect(models).toEqual(["k3", "claude-haiku-4-5"]);
+  test("model override touches only the Anthropic leg, and drops fallbacks for a model that lacks them", async () => {
+    const seen: { model: string; fallbacks: unknown }[] = [];
+    const f = async (_u: string, init: any) => { const b = JSON.parse(init.body); seen.push({ model: b.model, fallbacks: b.fallbacks }); return seen.length < 3 ? reply("x", 200, "") : reply(benign); };
+    await adjudicate("p", { env: { ANTHROPIC_API_KEY: "a", KIMI_API_KEY: "k" }, fetch: f as any, model: "claude-haiku-5-5" });
+    expect(seen).toEqual([{ model: "claude-haiku-5-5", fallbacks: undefined }, { model: "claude-haiku-5-5", fallbacks: undefined }, { model: "k3", fallbacks: undefined }]);
+  });
+
+  test("opts.system forces one prompt on every attempt (the matrix harness)", async () => {
+    const systems: string[] = [];
+    const f = async (_u: string, init: any) => { systems.push(JSON.parse(init.body).system); return systems.length < 3 ? reply("x", 200, "") : reply(benign); };
+    await adjudicate("p", { env: { ANTHROPIC_API_KEY: "a", KIMI_API_KEY: "k" }, fetch: f as any, system: "CUSTOM" });
+    expect(systems).toEqual(["CUSTOM", "CUSTOM", "CUSTOM"]);
   });
 
   test("explicit provider list bypasses env", async () => {
-    const custom: Provider[] = [{ name: "lab", url: "http://lab/v1/messages", headers: {}, model: "x", attempts: [{ thinking: false }] }];
+    const custom: Provider[] = [{ name: "lab", wire: "anthropic", url: "http://lab/v1/messages", headers: {}, model: "x", attempts: [{}] }];
     const urls: string[] = [];
-    const f = async (url: string) => { urls.push(url); return reply('{"agentic": false, "confidence": 0.1, "reasoning": ""}'); };
+    const f = async (url: string) => { urls.push(url); return reply(benign); };
     await adjudicate("p", { env, providers: custom, fetch: f as any });
     expect(urls).toEqual(["http://lab/v1/messages"]);
   });
@@ -316,7 +425,7 @@ describe("decide: policy", () => {
   test("escalate with NO provider key → alert (never a silent allow, never a kill)", async () => {
     const d = await decide(ESCALATE, { env: {}, governor: fresh() });
     expect(d).toMatchObject({ decision: "alert", tier: 1, verdict: "escalate" });
-    expect(d.reason).toContain("tier-2 unavailable");
+    expect(d.reason).toContain("tier-2 unavailable (no judge configured)");
   });
 
   test("escalate past the budget → alert", async () => {

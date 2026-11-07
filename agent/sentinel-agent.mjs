@@ -10,7 +10,8 @@
 //   sudo node sentinel-agent.mjs --enforce    # ENFORCE — kill the attack on detection
 //   node sentinel-agent.mjs --selftest        # score sample payloads, no Falco/root
 //
-//   env: KIMI_API_KEY / ANTHROPIC_API_KEY (enables tier 2; Kimi is tried first)
+//   env: ANTHROPIC_API_KEY (tier 2 on Claude), OPENAI_BASE_URL+OPENAI_MODEL (local judge),
+//        OPENAI_API_KEY, KIMI_API_KEY; ARIS_TIER2_ORDER picks the chain order
 //        ARIS_RULES (falco rules path)      FALCO_BIN (default: falco)
 //        ARIS_INCIDENTS (incident log path) ARIS_VERBOSE=1 (log every allow too)
 //        ARIS_CLOUD_URL + ARIS_INGEST_KEY (off-box alerts)
@@ -28,7 +29,7 @@ import { basename, isAbsolute, resolve as resolvePath } from "node:path";
 import { hostname } from "node:os";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
-import { decide, hasTier2, providers } from "./sentinel-core.mjs";
+import { decide, hasTier2, providers, providerWarnings } from "./sentinel-core.mjs";
 
 // SAFE BY DEFAULT: the agent detects + alerts + logs but NEVER kills unless you pass
 // --enforce. A false positive can't take down a customer's prod on day one; you flip
@@ -329,7 +330,8 @@ async function selftest() {
 function main() {
   log(`Aris Sentinel agent starting`);
   log(`  mode: ${ENFORCE ? "ENFORCE (kills the attack on detection)" : "MONITOR (detect + alert only — no kill; pass --enforce to arm)"}`);
-  log(`  tier 2: ${hasTier2() ? `ENABLED (${providers().map((p) => p.name).join(" -> ")})` : "disabled (tier-1 only; set KIMI_API_KEY or ANTHROPIC_API_KEY) — escalate band -> alert"}`);
+  log(`  tier 2: ${hasTier2() ? `ENABLED (${providers().map((p) => p.name).join(" -> ")})` : "disabled (tier-1 only; set ANTHROPIC_API_KEY, or OPENAI_BASE_URL+OPENAI_MODEL for a local judge) — escalate band -> alert"}`);
+  for (const w of providerWarnings()) log(`  WARN ${w}`);
   log(`  fail mode: ${process.env.ARIS_FAIL_MODE === "alert" ? "alert (tier-2 errors page, never block)" : "closed (tier-2 errors block as suspicious)"}`);
   log(`  cloud alerts: ${CLOUD_URL ? `-> ${CLOUD_URL} (Telegram via Aris Cloud)` : "disabled (set ARIS_CLOUD_URL)"}`);
   log(`  incidents -> ${INCIDENT_LOG}`);

@@ -42,7 +42,7 @@ that catches the stealth payload tier-1 only escalates), export a key first — 
 it the demo runs tier-1 only: it still blocks the narrated payload and **alerts** (logs,
 then forwards) the stealth one:
 ```bash
-export KIMI_API_KEY=sk-kimi-...                    # optional; enables tier 2 (or ANTHROPIC_API_KEY)
+export ANTHROPIC_API_KEY=sk-ant-...                # optional; enables tier 2 (or a local judge: OPENAI_BASE_URL+OPENAI_MODEL)
 node interposition/sentinel-langflow-demo.mjs      # listens :8000  ->  Langflow 127.0.0.1:7860
 ```
 The startup line reports whether tier 2 is ENABLED or disabled. Open a SECOND SSH

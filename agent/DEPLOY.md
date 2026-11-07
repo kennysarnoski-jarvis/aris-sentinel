@@ -30,12 +30,16 @@ Tier 2 (LLM adjudication) catches the *stealthier* narration tier-1 only escalat
 Without a key the escalate band is **alerted** (logged + reported, never killed), not
 silently allowed. Put the key in a root-only env file — never in the unit or process args:
 ```bash
-# Kimi K3 is tried first (default judge); ANTHROPIC_API_KEY is the fallback. Either works alone.
-printf 'KIMI_API_KEY=%s\n' 'sk-kimi-...' | sudo tee /etc/aris-sentinel.env >/dev/null
+# Claude Opus 5.5 (server-side fallbacks on classifier refusals, de-fanged retry):
+printf 'ANTHROPIC_API_KEY=%s\n' 'sk-ant-...' | sudo tee /etc/aris-sentinel.env >/dev/null
 sudo chmod 600 /etc/aris-sentinel.env
+# …or a local judge, nothing leaves the box (Ollama on the host, any instruct model):
+printf 'OPENAI_BASE_URL=http://127.0.0.1:11434/v1\nOPENAI_MODEL=qwen2.5:14b\n' | sudo tee -a /etc/aris-sentinel.env >/dev/null
 ```
-Tier-2 knobs (all optional, defaults in the README): `ARIS_FAIL_MODE=alert` to page
-instead of block on an adjudicator outage; `ARIS_TIER2_TIMEOUT_MS`, `_DEADLINE_MS`,
+Both may be set: the chain is `local → anthropic → openai → kimi` (`ARIS_TIER2_ORDER`
+reorders it) and the first validated verdict wins. Tier-2 knobs (all optional, defaults
+in the README): `ARIS_FAIL_MODE=alert` to page instead of block on an adjudicator outage;
+`ARIS_TIER2_EFFORT`, `ARIS_TIER2_FALLBACKS=0`; `ARIS_TIER2_TIMEOUT_MS`, `_DEADLINE_MS`,
 `_CACHE_TTL_MS`, `_CONCURRENCY`, `_BUDGET_PER_MIN` for cost and rate control.
 
 ## 4. Arm it
@@ -94,8 +98,8 @@ disguise isn't itself a signature. It de-brands:
 **Known remaining tells (need the eBPF-native rewrite to fully close):** Falco is still an
 apt package — `/etc/falco`, `/usr/bin/falco`, `dpkg -l | grep falco` reveal it to *deep*
 recon (the running process is renamed but the package isn't; the config dir is required).
-Also: env var names in `/proc/<pid>/environ` (`KIMI_API_KEY` / `ANTHROPIC_API_KEY` reveal LLM use), and
-outbound to `youraris.com` / `api.kimi.com` / `api.anthropic.com`. These defeat *casual* recon today; the
+Also: env var names in `/proc/<pid>/environ` (`ANTHROPIC_API_KEY` etc. reveal LLM use), and
+outbound to `youraris.com` / `api.anthropic.com` (a local judge has no such egress). These defeat *casual* recon today; the
 deeper layer is v2.
 
 ## Uninstall

@@ -2,10 +2,11 @@
 //
 // WHY THIS EXISTS: the 2026-07-21 FP-rate run showed Anthropic's real-time cyber
 // screen refusing 6/6 tier-2 escalations on BENIGN code (terraform, docker
-// entrypoints) before the model ever judged them. That screen is Anthropic-specific.
-// Kimi is the default adjudicator: no equivalent input screen, fast, and cheap enough
-// to run at production escalate-band volume. Same prompts, same JSON schema, same
-// never-throws contract — only the judge changes.
+// entrypoints) before the model ever judged them. Kimi has no equivalent input screen,
+// so it was the default judge until 2026-11-07. The Anthropic leg now asks for
+// server-side fallbacks and retries with the de-fanged prompt, so Kimi is an OPTIONAL
+// leg (last in the default order): same prompts, same JSON schema, same never-throws
+// contract — only the judge changes.
 //
 // THE ENDPOINT GOTCHA (cost us a 401 on 2026-07-21): there are TWO Kimi APIs with
 // SEPARATE key pools —

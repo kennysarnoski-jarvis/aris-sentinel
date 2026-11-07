@@ -18,7 +18,7 @@
 // Results persist to test/adjudicatorMatrix-results.{json,md} after EVERY call.
 
 import { readFileSync, writeFileSync } from "node:fs";
-import { attempt, SYSTEM, SYSTEM_AUTHORSHIP, type Adjudication } from "../detector/adjudicate";
+import { attempt, providers, SYSTEM, SYSTEM_AUTHORSHIP, type Adjudication } from "../detector/adjudicate";
 import { attemptKimi } from "../detector/adjudicateKimi";
 import { SAMPLES } from "./fpSamples";
 
@@ -58,16 +58,17 @@ const controls: Case[] = ["agentic_s3_exfil.py", "agentic_privesc_sudo.py"].map(
 const CASES = [...benign, ...controls];
 const PROMPTS: Record<string, string> = { current: SYSTEM, reframed: SYSTEM_AUTHORSHIP };
 
-// Provider legs. Kimi is the default adjudicator (the 6/6 benign-refusal run
-// showed Anthropic's screen is the problem being routed around). Claude legs
-// only join when ANTHROPIC_API_KEY is set — opt-in comparison data, not required.
+// Provider legs — every configured judge, one plain attempt per cell. The Claude legs
+// run with server-side fallbacks where the model supports them (that is what the
+// production chain sends), so a "refusal:cyber" stop here means the fallback model
+// declined too. A local / openai-wire leg joins when OPENAI_BASE_URL + OPENAI_MODEL
+// (or OPENAI_API_KEY + OPENAI_MODEL) are set.
+const oa = providers().find((p) => p.name === "local" || p.name === "openai");
 const LEGS: Leg[] = [
   ...(process.env.ANTHROPIC_API_KEY
-    ? [
-        { label: "claude-opus-4-8", run: (t: string, s: string) => attempt(t, "claude-opus-4-8", false, s) },
-        { label: "claude-haiku-4-5", run: (t: string, s: string) => attempt(t, "claude-haiku-4-5", false, s) },
-      ]
+    ? ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"].map((m) => ({ label: m, run: (t: string, s: string) => attempt(t, m, true, s) }))
     : []),
+  ...(oa ? [{ label: `${oa.name}:${oa.model}`, run: (t: string, s: string) => attempt(t, oa.model, true, s, oa) }] : []),
   ...(process.env.KIMI_API_KEY
     ? [
         {
@@ -79,7 +80,7 @@ const LEGS: Leg[] = [
 ];
 
 if (!LEGS.length) {
-  console.error("no adjudicator keys in env — set KIMI_API_KEY (and optionally ANTHROPIC_API_KEY)");
+  console.error("no adjudicator configured — set ANTHROPIC_API_KEY, OPENAI_BASE_URL+OPENAI_MODEL (local), OPENAI_API_KEY+OPENAI_MODEL, or KIMI_API_KEY");
   process.exit(1);
 }
 

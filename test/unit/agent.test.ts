@@ -110,7 +110,7 @@ describe("handleEvent", () => {
     const inc = readIncidents().slice(before);
     expect(inc).toHaveLength(1);
     expect(inc[0]).toMatchObject({ decision: "alert", action: "alerted", tier: 1, pid: 4242, exe: "python3", cwd: work, killed: [] });
-    expect(inc[0].reason).toContain("tier-2 unavailable");
+    expect(inc[0].reason).toContain("tier-2 unavailable (no judge configured)");
     expect(inc[0].narration).toContain("escalate to admin");
   });
 

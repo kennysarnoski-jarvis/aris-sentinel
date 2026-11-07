@@ -40,7 +40,7 @@ describe("Windows handleEvent", () => {
   test("escalate with no tier-2 key → alert incident", async () => {
     const inc = await agent.handleEvent({ pid: 4201, user: "CORP\\svc", payload: ESCALATE });
     expect(inc).toMatchObject({ decision: "alert", action: "alerted", tier: 1, pid: 4201 });
-    expect(inc?.reason).toContain("tier-2 unavailable");
+    expect(inc?.reason).toContain("tier-2 unavailable (no judge configured)");
   });
 
   test("benign → allow, no incident", async () => {

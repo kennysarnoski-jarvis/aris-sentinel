@@ -10,7 +10,7 @@
 //   node sentinel-agent-win.mjs --enforce  # kill the offending PowerShell process tree
 //   node sentinel-agent-win.mjs --mock      # replay agent/win/mock-events.jsonl (no Windows)
 //
-//   env: KIMI_API_KEY / ANTHROPIC_API_KEY (tier 2)  ARIS_CLOUD_URL + ARIS_INGEST_KEY (alerts)
+//   env: ANTHROPIC_API_KEY / OPENAI_BASE_URL+OPENAI_MODEL / KIMI_API_KEY (tier 2)  ARIS_CLOUD_URL + ARIS_INGEST_KEY (alerts)
 //        ARIS_SENSOR (path to sensor.ps1)  ARIS_INCIDENTS (incident log)  ARIS_HOST  ARIS_VERBOSE=1
 //        ARIS_FAIL_MODE / ARIS_TIER2_* — see ../sentinel-agent.mjs
 //
@@ -22,7 +22,7 @@ import { createInterface } from "node:readline";
 import { readFileSync, appendFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { decide, hasTier2, providers } from "../sentinel-core.mjs";
+import { decide, hasTier2, providers, providerWarnings } from "../sentinel-core.mjs";
 
 const ENFORCE = process.argv.includes("--enforce");
 const MONITOR = !ENFORCE;
@@ -142,7 +142,8 @@ function feed(stream) {
 function main() {
   log("Aris Sentinel Windows agent starting");
   log(`  mode: ${ENFORCE ? "ENFORCE (kills on detection)" : "MONITOR (detect + alert only — no kill; --enforce to arm)"}`);
-  log(`  tier 2: ${hasTier2() ? `ENABLED (${providers().map((p) => p.name).join(" -> ")})` : "disabled (tier-1 only; set KIMI_API_KEY or ANTHROPIC_API_KEY) — escalate band -> alert"}`);
+  log(`  tier 2: ${hasTier2() ? `ENABLED (${providers().map((p) => p.name).join(" -> ")})` : "disabled (tier-1 only; set ANTHROPIC_API_KEY, or OPENAI_BASE_URL+OPENAI_MODEL for a local judge) — escalate band -> alert"}`);
+  for (const w of providerWarnings()) log(`  WARN ${w}`);
   log(`  cloud alerts: ${CLOUD_URL ? `-> ${CLOUD_URL}` : "disabled (set ARIS_CLOUD_URL)"}`);
   if (INCIDENT_LOG) log(`  incidents -> ${INCIDENT_LOG}`);
 

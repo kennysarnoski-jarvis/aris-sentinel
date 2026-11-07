@@ -12,10 +12,10 @@ jobs:
     name: Key-free tests + typecheck (Bun)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # test:all shells out to `node` and `npm run win:mock`, so pin Node alongside Bun.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 20
 
@@ -35,10 +35,10 @@ jobs:
     name: Agents on bare Node 20 (Windows)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # No Bun, no `bun install`: the agents and the core are plain Node >=18 with zero deps.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 20
 

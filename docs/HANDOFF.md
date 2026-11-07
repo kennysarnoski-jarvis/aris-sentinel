@@ -40,8 +40,8 @@ signals as before the refactor (`test/corpus-snapshot.json`).
   unchanged.
 - **Later still:** the key-needed suites ran live on a local qwen2.5:14b (Ollama): pipeline
   74/74, fpRate 0/12, tier2 5/5, matrix 8/8 with the two-criteria prompt, which now leads
-  on every leg (see corpus/README.md). Hosted judges (Claude, Kimi) still unmeasured on
-  the new chain.
+  on every leg (see corpus/README.md). Claude Opus 5.5 then ran the same cells: 74/74, 0/12,
+  5/5 (one fail-closed), matrix 48/48 with 10 in-call fallback rescues. Kimi unmeasured.
 - MONITOR is still the default; `alert` and `error` never kill, even in `--enforce`.
 
 ## Not done here

@@ -106,7 +106,7 @@ exec / script-block  ─►  decode (base64 · hex · nested)  ─►  tier 1: n
 | judge | config | why you'd pick it |
 |---|---|---|
 | **local** | `OPENAI_BASE_URL=http://127.0.0.1:11434/v1` + `OPENAI_MODEL` (Ollama, vLLM, llama.cpp) | nothing leaves the box; first in the chain by default. `qwen2.5:14b` went 74/74 on the corpus |
-| **anthropic** | `ANTHROPIC_API_KEY` (Claude Opus 5.5) | strongest judgment; server-side fallbacks on classifier refusals |
+| **anthropic** | `ANTHROPIC_API_KEY` (Claude Opus 5.5) | 74/74 on the corpus; server-side fallbacks rescued 10/48 classifier declines in the matrix |
 | **openai** | `OPENAI_API_KEY` + `OPENAI_MODEL`, or any remote OpenAI-compatible `OPENAI_BASE_URL` | bring your own |
 | **kimi** | `KIMI_API_KEY` (Kimi K3) | no cyber input screen |
 
@@ -137,7 +137,16 @@ Numbers from the labeled corpus, measured with the detector frozen *before* the 
 
 **The limit, stated plainly:** an agent told not to narrate is invisible to this. Zero narration is zero signal. Tier 2 narrows that gap and cannot close it. The stress test of a mutating attacker (`test/loop/`) caught 4 of 6 attempts; the two that evaded had suppressed their narration and achieved nothing real.
 
-**With a judge, measured live (2026-11-07, local `qwen2.5:14b` through Ollama, nothing leaving the machine):** the full pipeline went **74/74**: all 28 agentic files blocked (17 at tier 1, 11 convicted by the judge), all 40 benign files allowed, 0/12 on the adversarial false-positive set, 5/5 on the novel attacks. The judge matrix also showed *why the prompt matters*: with the original prompt a 14B model convicts anything plan-shaped; with the two-criteria prompt (AI authorship *and* malicious intent) it is 8/8. That prompt now leads on every judge. One model, one day; the harnesses re-run on whatever you deploy.
+**With a judge, measured live (2026-11-07), two judges on the same cells:**
+
+| | local `qwen2.5:14b` (Ollama, nothing leaves the box) | Claude Opus 5.5 (server-side fallbacks on) |
+|---|---|---|
+| pipeline: 28 agentic + 40 benign + 3 novel | 74/74 | 74/74 |
+| adversarial false-positive set | 0/12 | 0/12 |
+| novel attacks tier 1 only escalates | 5/5 | 5/5 (one via fail-closed: the cyber classifier declined it on every attempt) |
+| judge matrix | 8/8 | 48/48 across Opus, Sonnet and Haiku 5.5 |
+
+The matrix also showed *why the prompt matters*: with the original prompt the 14B model convicts anything plan-shaped; with the two-criteria prompt (AI authorship *and* malicious intent) it is 8/8, so that prompt now leads on every judge. And it showed the fallbacks working: 10 of 48 Claude cells were declined by the 5.5 classifier and rescued in the same call by Opus 4.8 or Sonnet 5, every rescue correct. Details and caveats in [corpus/README.md](corpus/README.md). One day, two models; the harnesses re-run on whatever you deploy.
 
 ## Run it for real
 

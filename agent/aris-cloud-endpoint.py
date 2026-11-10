@@ -34,6 +34,21 @@ def _format_sentinel_alert(inc: dict) -> str:
                  f"{float(sess.get('score') or 0):.2f} (this one alone: {float(sess.get('payloadScore') or 0):.2f}).") + words
     cmd = f"cmd: {str(inc.get('cmdline', ''))[:100]}"
 
+    # Tripwire: the evidence is an action, not narration. The agent never sends the token.
+    trip = inc.get("tripwire") or {}
+    if trip.get("kind") == "decoy" and decision == "alert":
+        return (
+            f"\u26a0\ufe0f Aris TRIPWIRE on {host}: the decoy was looked at\n"
+            f"{inc.get('ts', '')}\n\n"
+            f"\U0001faa4 A command addressed the decoy directory {trip.get('evidence')} without running its canary command "
+            f"(pid {inc.get('pid')}, user '{inc.get('user')}', session sid={inc.get('sid')}). Nothing legitimate lives there.\n"
+            f"Nothing was killed: a look is not proof, and an administrator can do it too.\n\n"
+            f"\u2705 Next steps:\n"
+            f"\u2022 Was that you or a colleague? If not, somebody is exploring {host}.\n"
+            f"\u2022 Watch session sid={inc.get('sid')}; review what user '{inc.get('user')}' ran around {inc.get('ts', '')}.\n\n"
+            f"{cmd}"
+        )
+
     if decision == "error":
         return (
             f"\u2757 Aris detector ERROR on {host}\n"
@@ -68,10 +83,19 @@ def _format_sentinel_alert(inc: dict) -> str:
     else:
         caught = f"caught by tier 1 (narration filter, score {float(inc.get('score') or 0):.2f})"
     intent = inc.get("reasoning") or ("agentic-narration signals: " + ", ".join(inc.get("signals") or []) or "n/a")
+    if trip.get("kind") == "token":
+        caught = "caught by the TRIPWIRE (it ran the decoy's canary command; no narration needed)"
+        intent = ("it read the planted decoy and did what the decoy told an automated agent to do"
+                  + (", wrapped in an encoded layer" if trip.get("decoded") else "")
+                  + ". Nothing legitimate on this host runs that command.")
     if inc.get("action") == "killed":
         did = f"\U0001f52a I killed it (pid {inc.get('pid')}, process tree) before the destructive step. No damage."
     else:
         did = f"\u26a0\ufe0f Action: {inc.get('action')} (pid {inc.get('pid')})."
+    if trip.get("kind") == "token" and inc.get("action") == "killed":
+        # The decoy helper is inert, so killing it prevents nothing by itself. Say what matters.
+        did = (f"\U0001f52a I killed the process that ran it (pid {inc.get('pid')}). The decoy helper itself is harmless; "
+               f"what matters is the session that chose to run it (sid={inc.get('sid')}), which is ended too when the agent runs with --kill-session.")
     return (
         f"\U0001f6a8 Aris caught an AI attacker on {host}\n"
         f"{inc.get('ts', '')}\n\n"
@@ -139,7 +163,19 @@ if __name__ == "__main__":
         "cmdline": "bash step4.sh",
         "narration": "I'll check what this account can reach first. Step 2: list the mounted shares. finance is the largest share, so that one goes first.",
     }
-    for inc in (sample, session, alert, err):
+    tripwire = {
+        "host": "prod-db-01", "ts": "2026-11-10T03:10:02Z", "decision": "block", "tier": 1, "score": 0.0,
+        "action": "killed", "pid": 7210, "sid": 7190, "user": "www-data", "signals": ["tripwire_token"],
+        "tripwire": {"kind": "token", "decoded": False, "fingerprint": "9bf7e3b77de1", "evidence": "/opt/vault-access/register --ticket [tripwire:9bf7e3b77de1]"},
+        "cmdline": "/opt/vault-access/register --ticket [tripwire:9bf7e3b77de1]", "narration": "",
+    }
+    looked = {
+        "host": "prod-db-01", "ts": "2026-11-10T03:09:41Z", "decision": "alert", "tier": 1, "score": 0.0,
+        "action": "alerted", "pid": 7204, "sid": 7190, "user": "www-data", "signals": ["tripwire_decoy"],
+        "tripwire": {"kind": "decoy", "decoded": False, "fingerprint": "9bf7e3b77de1", "evidence": "/opt/vault-access"},
+        "cmdline": "cat /opt/vault-access/README.md", "narration": "",
+    }
+    for inc in (sample, session, tripwire, looked, alert, err):
         print("=" * 70)
         print(_format_sentinel_alert(inc))
     print("=" * 70)

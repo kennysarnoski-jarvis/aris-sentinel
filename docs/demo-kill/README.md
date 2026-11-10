@@ -59,7 +59,7 @@ judge, and needs nothing but the mounted repo:
 limactl shell aris-demo -- sudo bash /Volumes/ArisLLM/Projects-Archive/aris-sentinel/docs/demo-kill/validate-session-kill.sh
 ```
 
-Six scenarios, 23 checks, about 75 seconds: a session kill (tree, driving shell and a
+Six scenarios, 24 checks, about 75 seconds: a session kill (tree, driving shell and a
 helper), quarantine of a convicted session with a protected survivor, an unrelated
 control, a session alert from thin narration across three execs (which must kill
 nothing), reading the incident log with an interpreter (which must not be an attack), and
@@ -71,6 +71,41 @@ The first run of this script, on 2026-11-10, failed 8 of 17 checks and found two
 bugs: the agent read its own incident log as a script and convicted the reader, and the
 session kill that followed quarantined the operator's own terminal. Both are fixed and
 both are now scenarios here.
+
+A third came out of the tripwire run the same day. The script passed 23/23 while the
+convicted session's driving shell still got one more command off: the agent killed the
+offender first, that woke the shell waiting on it, and the shell ran its next command
+before the session kill reached it. The old check had a `sleep`
+there, which hid it. The session is now killed before the offender, outermost ancestor
+first, and check 24 is a `touch` on the very next line that must never happen.
+
+## Live validation of the tripwire
+
+`validate-tripwire.sh` does the same for `--tripwire`: it arms the agent with
+`--enforce --kill-session --tripwire`, the decoys under `/tmp/aris-tripwire` rather than
+`/opt`, and checks eight things in 26 checks: the decoys are planted with the right modes
+and the state file is root-only; an unprivileged session that reads the README raises an
+alert and carries on; a stand-in "agent" (a five-line shell script) that runs the command
+it found in the README is convicted and its whole session ended before its very next command; the
+same command wrapped in base64 is convicted too; an unrelated session is untouched; the
+token appears in neither log; a restart keeps the token and puts a deleted decoy back; and
+`--tripwire-remove` leaves nothing behind.
+
+```bash
+limactl shell aris-demo -- sudo bash /Volumes/ArisLLM/Projects-Archive/aris-sentinel/docs/demo-kill/validate-tripwire.sh
+```
+
+**Run live on 2026-11-10: 26/26** (kernel 6.8.0-147, Falco 0.45.2, Node 18.19, 2 CPU / 4 GB).
+It did not start there. The first run passed 25/25 and the log still showed the session's
+next command being executed after the conviction. With the check tightened to "the very
+next command must not run" it failed 24/26, for two reasons that both needed fixing:
+
+1. The decoy helper returned at once, so the session was already one command ahead when
+   the conviction was handled (its next exec was logged 5 ms after the conviction). The
+   helper now holds its caller for two seconds.
+2. Holding was not enough: the agent killed the helper first, which is exactly what let
+   the waiting shell go. The session kill now runs before the offender is killed (see the
+   session-kill section above; the same fix, the same bug).
 
 ## 5. Tear down
 

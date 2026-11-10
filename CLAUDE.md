@@ -17,7 +17,7 @@ change and the result recorded in corpus/README.md (see its rules).
 - `bun run score <file>`: score a file the way the agent would (verdict, signals, evidence)
 - `bun run test:all`: everything below in one go
 - `bun run test`: tier-1 corpus (expect precision 1.00, tier-1 recall 0.61, pipeline-reachable recall 1.00, FP=0)
-- `bun test`: unit tests (expect 255 pass)
+- `bun test`: unit tests (expect 307 pass)
 - `bun run typecheck`: tsc over detector/ and test/ (expect clean)
 - `bun run windows`: PowerShell corpus (expect 10/10)
 - `bun run pipeline:stub`: two-tier routing (expect 6/6)
@@ -25,7 +25,7 @@ change and the result recorded in corpus/README.md (see its rules).
 - `bun run score --session <files|x.jsonl>`: score inputs as ONE session
 - `bun run selftest` and `bun run win:mock`: agent smoke tests
 
-Key-needed runs (`tier2`, `pipeline`, `fpRate`, `matrix`, `sessions`) use whatever tier-2 judges are
+Key-needed runs (`tier2`, `pipeline`, `fpRate`, `matrix`, `sessions`, `tripwire:bait`) use whatever tier-2 judges are
 configured (`ANTHROPIC_API_KEY`, `OPENAI_BASE_URL`+`OPENAI_MODEL`, `KIMI_API_KEY`) and
 write results to `test/*-results.md`. Read those files; don't
 paste payload output.
@@ -38,14 +38,29 @@ at tier 1. A fail-closed run of a key-needed harness is not a result: `sessions`
 INVALID when the judge never answered.
 
 ## Session kill (Linux agent, --enforce --kill-session)
-Opt-in twice. On a block it kills the offender's tree, then every process sharing its sid
-under the same protected-process guard, and quarantines the sid (execs in it are killed
-unscored). Never on `alert`, never in monitor, never the agent's own session. The kill
-primitives are on `deps` (`killTree`, `killPid`, `sessionPids`, `procName`, `now`, `mode`);
+Opt-in twice. On a block it kills every process sharing the offender's sid under the same
+protected-process guard, THEN the offender's tree, and quarantines the sid (execs in it are
+killed unscored). The order is load-bearing: the session dies first, the offender's
+ancestors outermost first, the offender last. Killing the offender first wakes the shell
+that is waiting on it, and it ran one more command (found live 2026-11-10). Never on
+`alert`, never in monitor, never the agent's own session. The kill primitives are on `deps`
+(`killTree`, `killPid`, `sessionPids`, `ancestorsOf`, `procName`, `now`, `mode`);
 tests MUST stub them before flipping `deps.mode.enforce`, or they would signal real pids.
 Live check (needs the Lima VM; ask Kenny first): `docs/demo-kill/validate-session-kill.sh`,
-expect 23/23. For an interpreter exec only the FIRST positional argument is read as the
+expect 24/24. For an interpreter exec only the FIRST positional argument is read as the
 script (`scriptToken`); never widen that to "any argument that is a file".
+
+## Tripwire (--tripwire, both agents)
+Opt-in. The agent plants decoy directories (README + inert helper that holds its caller
+for `TRIPWIRE_HOLD_S` seconds so a session kill lands before the caller's next command;
+text and policy in the core) and matches a per-host random token. Invariants: the token executed = tier-1 block
+with no judge; the decoy merely addressed = alert, never a kill; a token payload never
+enters a session window or reaches a judge; the token never appears in a log line, an
+incident or a test fixture (`redact()` puts a fingerprint there). Never put a real token on
+a command line: on a host with the agent armed that is a conviction. Tests build their own
+matcher with `createTripwire` and plant only in a temp directory. `bun run tripwire:bait`
+(key-needed) measures how often a model runs the canary command; live check (needs the
+Lima VM; ask Kenny first): `docs/demo-kill/validate-tripwire.sh`, expect 26/26.
 
 ## Rules
 - The agent and core stay dependency-free plain Node ≥18; the core stays ONE file

@@ -18,6 +18,9 @@ data leaving the host.**
   agentic → flagged). No payload leaves for these.
 - Your files, environment, credentials, and application data. Aris reads the command
   line and, for interpreter execs, the script being run — nothing else.
+- The tripwire token (only with `--tripwire`). A payload that carries it is decided
+  locally before it can reach a session window, a judge or an off-box report, and the
+  token is replaced by a fingerprint (`[tripwire:<12 hex>]`) in every log line and incident.
 
 ## What leaves the box, and exactly when
 
@@ -85,6 +88,11 @@ credential capture.
 - **Rate-limited escalation.** Tier-2 calls are capped per minute
   (`ARIS_TIER2_BUDGET_PER_MIN`, default 30) and deduplicated; past the cap the agent
   alerts locally rather than sending more.
+- **The tripwire is opt-in and it writes to your disk.** Only with `--tripwire` does the
+  agent create files outside its own directories: a `README.md` and an inert `register`
+  helper in each decoy directory (`ARIS_TRIPWIRE_DIRS`), plus a 0600 state file holding
+  the token. It never overwrites a directory it did not create, and
+  `--tripwire-remove` / `uninstall.sh` delete exactly what it planted.
 - **Monitor mode is the default.** The agent detects and alerts but **does not kill any
   process** unless you explicitly run it with `--enforce`. You choose when it's allowed
   to act.

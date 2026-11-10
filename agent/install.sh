@@ -12,23 +12,28 @@
 # OPENAI_*, KIMI_API_KEY, ARIS_TIER2_*, ARIS_CLOUD_URL, ARIS_INGEST_KEY), so re-installing over the demo setup is seamless.
 set -euo pipefail
 
-# Args (any order): [disguise-name]  and optional --enforce [--kill-session].
+# Args (any order): [disguise-name]  and optional --enforce [--kill-session] [--tripwire].
 # Default is MONITOR mode (detect + alert, no kill) — safe for a first pilot. Add
 # --enforce only once you trust it on the target box. --kill-session (with --enforce) also
 # ends the offender's whole session and quarantines it; it does nothing on its own.
+# --tripwire (any mode) plants decoy directories (ARIS_TRIPWIRE_DIRS, default
+# /opt/vault-access and /var/backups/vault-access) whose README asks an automated agent to
+# run one canary command. That command running is a detection; uninstall.sh removes them.
 NAME="sys-telemetryd"
 ENFORCE_FLAG=""
 SESSION_FLAG=""
+TRIPWIRE_FLAG=""
 for a in "$@"; do
   case "$a" in
     --enforce) ENFORCE_FLAG=" --enforce" ;;
     --kill-session) SESSION_FLAG=" --kill-session" ;;
+    --tripwire) TRIPWIRE_FLAG=" --tripwire" ;;
     -*) ;;
     *) NAME="$a" ;;
   esac
 done
 if [ -n "$SESSION_FLAG" ] && [ -z "$ENFORCE_FLAG" ]; then echo "--kill-session needs --enforce; ignoring it (staying in MONITOR mode)"; SESSION_FLAG=""; fi
-EXECFLAGS="$ENFORCE_FLAG$SESSION_FLAG"
+EXECFLAGS="$ENFORCE_FLAG$SESSION_FLAG$TRIPWIRE_FLAG"
 SRC="$(cd "$(dirname "$0")" && pwd)"
 LIB="/usr/local/lib/$NAME"
 ENVF="/etc/$NAME.env"
@@ -62,6 +67,7 @@ set_kv ARIS_RULES     "$LIB/rules.yaml"
 set_kv FALCO_BIN      "$LIB/${NAME}-probe"
 set_kv ARIS_PROC_NAME "$NAME"
 set_kv ARIS_INCIDENTS "/var/lib/$NAME/events"
+set_kv ARIS_TRIPWIRE_STATE "/var/lib/$NAME/tripwire.json"
 
 # 4. generic systemd unit (Restart=always -> respawns if the attacker kills it;
 #    killing/stopping it is a tamper event the dead-man's switch will catch).
@@ -88,6 +94,7 @@ systemctl restart "$NAME.service"
 
 echo "installed as '$NAME'"
 echo "  mode    : ${ENFORCE_FLAG:+ENFORCE (kills on detection)${SESSION_FLAG:+ + SESSION KILL (ends the whole offending session and quarantines it)}}${ENFORCE_FLAG:-MONITOR (detect + alert, no kill — re-run with --enforce to arm)}"
+echo "  tripwire: ${TRIPWIRE_FLAG:+ON (decoys planted; the canary command running is a detection, see the service log for where)}${TRIPWIRE_FLAG:-off (re-run with --tripwire to plant decoys)}"
 echo "  service : systemctl status $NAME"
 echo "  files   : $LIB   env: $ENVF"
 echo "  ps/top  : shows '$NAME' (not node/sentinel);  falco -> ${NAME}-probe"

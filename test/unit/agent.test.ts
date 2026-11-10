@@ -287,6 +287,7 @@ describe("session-level kill (--enforce --kill-session)", () => {
     agent.deps.killTree = (pid: number) => { treeKills.push(pid); return [pid]; };
     agent.deps.killPid = (pid: number) => { pidKills.push(pid); };
     agent.deps.sessionPids = (sid: number) => { asked.push(sid); return members[sid] ?? []; };
+    agent.deps.ancestorsOf = () => []; // never read this machine's /proc for a made-up pid
     agent.deps.procName = (pid: number) => names[pid] ?? "bash";
     agent.deps.now = () => t;
   };
@@ -434,6 +435,40 @@ describe("session-level kill (--enforce --kill-session)", () => {
     agent.deps.ownSids = new Set();
   });
 
+  test("kill order (found live): the session dies BEFORE the offender, its ancestors first, outermost first", async () => {
+    // The shell that launched the offender is blocked waiting for it. Killing the offender
+    // first wakes that shell, and it ran one more command before the session kill arrived.
+    arm({ enforce: true, killSession: true });
+    const sid = 880070;
+    const a = exec(LOUD + "\n# g", sid);
+    const [harness, shell, helper, sibling] = [62700, 62701, 62702, 62703];
+    members[sid] = [sibling, helper, a.pid, shell, harness]; // /proc order is no help
+    const order: string[] = [];
+    agent.deps.killTree = (pid: number) => { order.push(`tree:${pid}`); return [pid, helper]; }; // helper is the offender's child
+    agent.deps.killPid = (pid: number) => { order.push(`pid:${pid}`); };
+    agent.deps.ancestorsOf = (pid: number) => (pid === a.pid ? [a.pid, shell, harness, 1] : [pid]);
+    await agent.handleEvent(a.f);
+    expect(order).toEqual([`pid:${harness}`, `pid:${shell}`, `pid:${sibling}`, `pid:${helper}`, `tree:${a.pid}`]);
+    const inc = last();
+    expect(inc.session_kill.killed).toEqual([harness, shell, sibling, helper]);
+    expect(inc.killed).toEqual([a.pid, helper, harness, shell, sibling]); // each pid once
+  });
+
+  test("kill order: a protected ancestor is spared in place and the rest still go top-down", async () => {
+    arm({ enforce: true, killSession: true });
+    const sid = 880071;
+    const a = exec(LOUD + "\n# h", sid);
+    members[sid] = [a.pid, 62711, 62710];
+    names[62710] = "sshd";
+    const order: string[] = [];
+    agent.deps.killTree = (pid: number) => { order.push(`tree:${pid}`); return [pid]; };
+    agent.deps.killPid = (pid: number) => { order.push(`pid:${pid}`); };
+    agent.deps.ancestorsOf = (pid: number) => (pid === a.pid ? [a.pid, 62711, 62710] : [pid]);
+    await agent.handleEvent(a.f);
+    expect(order).toEqual(["pid:62711", `tree:${a.pid}`]);
+    expect(last().session_kill.spared).toEqual([{ pid: 62710, why: "protected-comm:sshd" }]);
+  });
+
   test("a kill that throws (process already gone) does not stop the rest", async () => {
     arm({ enforce: true, killSession: true });
     const sid = 880050;
@@ -446,3 +481,164 @@ describe("session-level kill (--enforce --kill-session)", () => {
   });
 });
 
+
+describe("tripwire through the agent (--tripwire)", () => {
+  // The kill primitives are stubbed before enforce is ever flipped; nothing is planted
+  // (the matcher is built directly, the decoy directory does not exist on this machine).
+  const DIR = "/opt/vault-access";
+  let real: any;
+  let core: typeof import("../../agent/sentinel-core.mjs");
+  let token: string, command: string;
+  let treeKills: number[], pidKills: number[], asked: number[];
+  const members: Record<number, number[]> = {};
+  let nextPid = 71000;
+
+  const arm = (mode: { enforce: boolean; killSession: boolean }) => {
+    treeKills = []; pidKills = []; asked = [];
+    agent.deps.mode = mode;
+    agent.deps.killTree = (pid: number) => { treeKills.push(pid); return [pid]; };
+    agent.deps.killPid = (pid: number) => { pidKills.push(pid); };
+    agent.deps.sessionPids = (sid: number) => { asked.push(sid); return members[sid] ?? []; };
+    agent.deps.ancestorsOf = () => []; // never read this machine's /proc for a made-up pid
+    agent.deps.procName = () => "bash";
+    agent.deps.now = () => 5_000_000;
+  };
+  const run = (cmdline: string, sid: number, extra: Record<string, unknown> = {}) => {
+    const pid = ++nextPid;
+    return { pid, f: { "proc.pid": pid, "proc.ppid": 1, "proc.sid": sid, "user.name": "www-data", "proc.exe": "/usr/bin/" + cmdline.split(" ")[0].split("/").pop(), "proc.cmdline": cmdline, "proc.cwd": "/tmp", ...extra } };
+  };
+  const last = () => readIncidents().at(-1);
+  const logText = () => readFileSync(incidents, "utf8");
+
+  beforeAll(async () => {
+    core = await import("../../agent/sentinel-core.mjs");
+    real = { ...agent.deps, mode: { ...agent.deps.mode } };
+    token = core.newTripwireToken();
+    command = core.tripwireDecoy(token, DIR, "linux").command;
+    agent.deps.ownSids = new Set();
+    agent.deps.tripwire = core.createTripwire({ token, dirs: [DIR] });
+  });
+  afterAll(() => { Object.assign(agent.deps, real); });
+
+  test("the agent starts with no tripwire: it is opt-in", () => {
+    expect(real.tripwire).toBeNull();
+  });
+
+  test("monitor: the canary command is a BLOCK incident, nothing is killed, and the token is not in the log", async () => {
+    arm({ enforce: false, killSession: false });
+    const a = run(command, 990001);
+    expect(await agent.handleEvent(a.f)).toBeUndefined();
+    expect(treeKills).toEqual([]);
+    const inc = last();
+    expect(inc).toMatchObject({ decision: "block", action: "monitored", tier: 1, pid: a.pid, signals: ["tripwire_token"], killed: [], session_kill: null });
+    expect(inc.tripwire).toMatchObject({ kind: "token", decoded: false, fingerprint: agent.deps.tripwire!.fingerprint });
+    expect(inc.cmdline).toBe(`${DIR}/register --ticket [tripwire:${agent.deps.tripwire!.fingerprint}]`);
+    expect(logText()).not.toContain(token);
+  });
+
+  test("enforce: the process that ran it is killed; without --kill-session its session is left alone", async () => {
+    arm({ enforce: true, killSession: false });
+    const a = run(`sh -c ${command}`, 990002);
+    await agent.handleEvent(a.f);
+    expect(treeKills).toEqual([a.pid]);
+    expect(asked).toEqual([]);
+    expect(last()).toMatchObject({ decision: "block", action: "killed", killed: [a.pid], session_kill: null });
+    expect(logText()).not.toContain(token);
+  });
+
+  test("enforce + kill-session: taking the bait ends the whole session and quarantines it", async () => {
+    arm({ enforce: true, killSession: true });
+    const sid = 990003;
+    const a = run(command, sid);
+    members[sid] = [a.pid, 72001, 72002];
+    await agent.handleEvent(a.f);
+    expect(treeKills).toEqual([a.pid]);
+    expect(pidKills).toEqual([72001, 72002]);
+    expect(last().session_kill).toMatchObject({ sid, killed: [72001, 72002], why: null });
+    // the session's next command, silent and unrelated, is stopped unscored
+    const b = run("ls -la /var/log", sid);
+    await agent.handleEvent(b.f);
+    expect(treeKills).toEqual([a.pid, b.pid]);
+    expect(last().quarantine).toMatchObject({ sid, count: 1 });
+  });
+
+  test("a script that carries the canary command is caught when it is run", async () => {
+    arm({ enforce: true, killSession: false });
+    writeFileSync(join(work, "next-step.sh"), `#!/bin/bash\nset -e\n${command}\nls /mnt\n`);
+    const a = run("bash next-step.sh", 990004, { "proc.cwd": work });
+    await agent.handleEvent(a.f);
+    expect(treeKills).toEqual([a.pid]);
+    expect(last()).toMatchObject({ decision: "block", cmdline: "bash next-step.sh" });
+    expect(last().tripwire).toMatchObject({ kind: "token" });
+    expect(logText()).not.toContain(token);
+  });
+
+  test("an encoded canary command is caught, and the encoded run is taken out of the log too", async () => {
+    arm({ enforce: true, killSession: false });
+    const blob = Buffer.from(command).toString("base64");
+    const a = run(`bash -c echo ${blob} | base64 -d | sh`, 990005);
+    await agent.handleEvent(a.f);
+    expect(treeKills).toEqual([a.pid]);
+    expect(last().tripwire).toMatchObject({ kind: "token", decoded: true });
+    expect(last().cmdline).toBe("bash -c echo [encoded tripwire] | base64 -d | sh");
+    expect(logText()).not.toContain(blob);
+  });
+
+  test("a look at the decoy is an ALERT: never a kill, never a session kill, even fully armed", async () => {
+    arm({ enforce: true, killSession: true });
+    const sid = 990006;
+    const a = run(`cat ${DIR}/README.md`, sid);
+    members[sid] = [a.pid, 72100];
+    await agent.handleEvent(a.f);
+    expect(treeKills).toEqual([]);
+    expect(pidKills).toEqual([]);
+    expect(asked).toEqual([]);
+    expect(last()).toMatchObject({ decision: "alert", action: "alerted", pid: a.pid, signals: ["tripwire_decoy"], killed: [], session_kill: null });
+    expect(last().tripwire).toMatchObject({ kind: "decoy", evidence: DIR });
+    // and the session is not quarantined: its next command runs
+    expect(await agent.handleEvent(run("ls -la /srv", sid).f)).toMatchObject({ decision: "allow" });
+  });
+
+  test("the process's cwd counts: `cat README.md` from inside the decoy, a relative path from its parent", async () => {
+    arm({ enforce: true, killSession: false });
+    await agent.handleEvent(run("cat README.md", 990007, { "proc.cwd": DIR }).f);
+    expect(last()).toMatchObject({ decision: "alert", cmdline: "cat README.md" });
+    await agent.handleEvent(run("cat vault-access/README.md", 990008, { "proc.cwd": "/opt" }).f);
+    expect(last()).toMatchObject({ decision: "alert", cmdline: "cat vault-access/README.md" });
+    expect(treeKills).toEqual([]);
+  });
+
+  test("unrelated commands are untouched, and without a tripwire the canary command is just a command", async () => {
+    arm({ enforce: true, killSession: true });
+    const n = readIncidents().length;
+    expect(await agent.handleEvent(run("ls -la /opt", 990009).f)).toMatchObject({ decision: "allow" });
+    expect(await agent.handleEvent(run("tar czf /tmp/opt.tgz /opt", 990010).f)).toMatchObject({ decision: "allow" });
+    agent.deps.tripwire = null;
+    expect(await agent.handleEvent(run(command, 990011).f)).toMatchObject({ decision: "allow" });
+    expect(readIncidents().length).toBe(n);
+    expect(treeKills).toEqual([]);
+    agent.deps.tripwire = core.createTripwire({ token, dirs: [DIR] });
+  });
+
+  test("the operator's own session is never ended for tripping it", async () => {
+    arm({ enforce: true, killSession: true });
+    const sid = 990012;
+    agent.deps.ownSids = new Set([sid]);
+    const a = run(command + " --again", sid);
+    members[sid] = [a.pid, 72200];
+    await agent.handleEvent(a.f);
+    expect(treeKills).toEqual([a.pid]);
+    expect(pidKills).toEqual([]);
+    expect(last().session_kill).toMatchObject({ killed: [], why: "the session the agent runs in or was started from" });
+    agent.deps.ownSids = new Set();
+  });
+
+  test("a detector error on a payload carrying the token still keeps the token out of the log", async () => {
+    arm({ enforce: false, killSession: false });
+    const realDecide = agent.deps.decide;
+    agent.deps.decide = (async () => { throw new Error("boom"); }) as any;
+    try { await agent.handleEvent(run(command + " --err", 990013).f); } finally { agent.deps.decide = realDecide; }
+    expect(last()).toMatchObject({ decision: "error" });
+    expect(logText()).not.toContain(token);
+  });
+});

@@ -3,8 +3,8 @@
 #
 #   sudo ./uninstall.sh [disguise-name]     # default: sys-telemetryd
 #
-# Restores the host to its pre-install state: stops and removes the service, deletes
-# the agent files and secrets, and re-enables the Falco services install.sh disabled.
+# Restores the host to its pre-install state: stops and removes the service, removes any
+# tripwire decoys the agent planted, deletes the agent files and secrets, and re-enables the Falco services install.sh disabled.
 # A partner needs to trust that removal is one command and complete — this is that.
 set -euo pipefail
 
@@ -22,11 +22,16 @@ rm -f "/etc/systemd/system/$UNIT"
 systemctl reset-failed "$UNIT" 2>/dev/null || true
 systemctl daemon-reload
 
-# 2. remove files. The env file holds the shared secret + API key -> shred it if we can.
+# 2. take the tripwire decoys away (only what the agent planted), while its code is still here
+if [ -f "$LIB/agentd.mjs" ] && [ -f "/var/lib/$NAME/tripwire.json" ]; then
+  ARIS_TRIPWIRE_STATE="/var/lib/$NAME/tripwire.json" node "$LIB/agentd.mjs" --tripwire-remove || echo "note: could not remove the tripwire decoys; see /var/lib/$NAME/tripwire.json for their paths"
+fi
+
+# 3. remove files. The env file holds the shared secret + API key -> shred it if we can.
 if command -v shred >/dev/null 2>&1 && [ -f "$ENVF" ]; then shred -u "$ENVF"; else rm -f "$ENVF"; fi
 rm -rf "$LIB" "/var/lib/$NAME"
 
-# 3. restore the Falco services install.sh masked/disabled (best-effort)
+# 4. restore the Falco services install.sh masked/disabled (best-effort)
 systemctl unmask falco.service falcoctl-artifact-follow.service falcoctl-artifact-install.service 2>/dev/null || true
 
 echo "removed '$NAME' — Aris Sentinel is gone from this host."

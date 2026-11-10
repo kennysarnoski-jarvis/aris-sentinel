@@ -64,6 +64,7 @@ cat > "$W/driver1.sh" <<EOF
 #!/bin/bash
 sleep 300 &
 python3 $W/attacker_impact.py
+touch $W/DRIVER1_NEXT
 sleep 2
 touch $W/DRIVER1_CONTINUED
 EOF
@@ -73,7 +74,8 @@ sleep 6
 check "the narrated process was killed at exec"                 'grep -q "SENTINEL KILL  tier-1" "$W/agent.log"'
 check "the agent announced a session kill for sid $SID1"        'grep -q "SESSION KILL sid=$SID1" "$W/agent.log"'
 check "no process is left in session $SID1 (was: shell + sleep 300 + python)" '[ "$(members $SID1)" = "0" ]'
-check "the driving shell never reached its next line"           '[ ! -e "$W/DRIVER1_CONTINUED" ]'
+check "the driving shell's very next command never ran"         '[ ! -e "$W/DRIVER1_NEXT" ]'
+check "the driving shell never reached its later lines"         '[ ! -e "$W/DRIVER1_CONTINUED" ]'
 check "the incident records the extra session members it killed" '[ "$(inc $SID1 session_killed)" -ge 2 ]'
 
 echo; echo "== 2. QUARANTINE: a protected survivor in a convicted session spawns a silent command"

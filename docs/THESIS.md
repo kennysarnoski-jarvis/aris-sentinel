@@ -106,6 +106,12 @@ Huntress all started) — high-touch, builds design-partner trust, defers self-s
   gets caught on every substantive attempt — including when it narrates *investigating its
   own death* — see `test/loop/`). Only a single thin line or full silence slips, and
   neither accomplishes a real objective.
+- **Full silence now has one answer, and it is partial:** the tripwire (`--tripwire`) plants
+  a decoy whose canary command only an agent acting on what it read would run. It needs no
+  narration. Measured on 2026-11-10 against three hosted Claude models: every one that
+  explored the host touched the decoy (an alert, 24/24) and none ran the command (0/24),
+  because those models distrust instructions found in files. The conviction half only bites
+  a less careful model, and that rate is unmeasured on the open models attackers use.
 - **Deep-recon stealth:** casual recon is defeated; the Falco *package* fingerprint
   (`/etc/falco`, `dpkg`) and the `ANTHROPIC_API_KEY` env/network tells need the
   eBPF-native rewrite (v2) to fully close.

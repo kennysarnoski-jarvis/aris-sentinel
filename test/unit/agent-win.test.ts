@@ -88,3 +88,42 @@ describe("Windows session evidence (one PowerShell process = one session)", () =
   });
 });
 
+
+describe("Windows tripwire", () => {
+  const DIR = "C:\\ProgramData\\vault-access";
+  let core: typeof import("../../agent/sentinel-core.mjs");
+  let token: string, command: string;
+
+  beforeAll(async () => {
+    core = await import("../../agent/sentinel-core.mjs");
+    token = core.newTripwireToken();
+    command = core.tripwireDecoy(token, DIR, "win32").command;
+  });
+  afterAll(() => { agent.deps.tripwire = null; });
+
+  test("the agent starts with no tripwire, and the canary command is then just a command", async () => {
+    expect(agent.deps.tripwire).toBeNull();
+    expect(await agent.handleEvent({ pid: 9300, user: "CORP\\svc", payload: command })).toMatchObject({ decision: "allow" });
+  });
+
+  test("a script block that runs the canary command → block incident, token kept out of the log", async () => {
+    agent.deps.tripwire = core.createTripwire({ token, dirs: [DIR] });
+    const inc: any = await agent.handleEvent({ source: "powershell_4104", pid: 9301, user: "CORP\\svc", payload: `& ${command}` });
+    expect(inc).toMatchObject({ decision: "block", action: "monitored", tier: 1, pid: 9301, signals: ["tripwire_token"] });
+    expect(inc.tripwire).toMatchObject({ kind: "token", fingerprint: agent.deps.tripwire!.fingerprint });
+    expect(inc.cmdline).toBe(`& ${DIR}\\register.cmd --ticket [tripwire:${agent.deps.tripwire!.fingerprint}]`);
+    expect(readFileSync(incidents, "utf8")).not.toContain(token);
+  });
+
+  test("reading the decoy → alert, whatever the case or slashes", async () => {
+    const a: any = await agent.handleEvent({ pid: 9302, user: "CORP\\svc", payload: `Get-Content ${DIR}\\README.md` });
+    expect(a).toMatchObject({ decision: "alert", action: "alerted", signals: ["tripwire_decoy"] });
+    expect(a.tripwire).toMatchObject({ kind: "decoy", evidence: DIR });
+    const b: any = await agent.handleEvent({ pid: 9303, user: "CORP\\svc", payload: "gc c:/programdata/VAULT-ACCESS/readme.md" });
+    expect(b).toMatchObject({ decision: "alert" });
+  });
+
+  test("unrelated PowerShell is untouched", async () => {
+    expect(await agent.handleEvent({ pid: 9304, user: "CORP\\svc", payload: "Get-ChildItem C:\\ProgramData" })).toMatchObject({ decision: "allow" });
+  });
+});

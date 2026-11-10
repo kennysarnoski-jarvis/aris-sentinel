@@ -18,6 +18,7 @@
     "pipeline": "bun run test/pipeline.ts",
     "sessions:stub": "bun run test/sessions.ts --stub",
     "sessions": "bun run test/sessions.ts",
+    "tripwire:bait": "bun run test/tripwireBait.ts",
     "fpRate": "bun run test/fpRate.ts",
     "matrix": "bun run test/adjudicatorMatrix.ts",
     "windows": "bun run test/windows.ts",

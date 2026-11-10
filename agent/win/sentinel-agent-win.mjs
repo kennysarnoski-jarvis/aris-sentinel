@@ -8,11 +8,15 @@
 //
 //   node sentinel-agent-win.mjs            # MONITOR (default) — detect + alert, no kill
 //   node sentinel-agent-win.mjs --enforce  # kill the offending PowerShell process tree
+//   node sentinel-agent-win.mjs --tripwire  # (any mode) plant a decoy whose README asks an agent
+//                                           # to run one canary command: run -> block, looked at -> alert
+//   node sentinel-agent-win.mjs --tripwire-remove   # take the decoy away again, then exit
 //   node sentinel-agent-win.mjs --mock      # replay agent/win/mock-events.jsonl (no Windows)
 //
 //   env: ANTHROPIC_API_KEY / OPENAI_BASE_URL+OPENAI_MODEL / KIMI_API_KEY (tier 2)  ARIS_CLOUD_URL + ARIS_INGEST_KEY (alerts)
 //        ARIS_SENSOR (path to sensor.ps1)  ARIS_INCIDENTS (incident log)  ARIS_HOST  ARIS_VERBOSE=1
 //        ARIS_FAIL_MODE / ARIS_TIER2_* — see ../sentinel-agent.mjs
+//        ARIS_TRIPWIRE_STATE (where the tripwire token is kept)  ARIS_TRIPWIRE_DIRS (comma-separated decoy dirs)
 //
 // Decisions: block → monitor logs/reports, enforce kills.  alert → logged + reported,
 // never killed.  error → the detector threw: logged + reported, never dropped.
@@ -21,12 +25,18 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { readFileSync, appendFileSync } from "node:fs";
 import { hostname } from "node:os";
+import { win32 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { decideSession, defaultSessions, hasTier2, providers, providerWarnings } from "../sentinel-core.mjs";
+import { armTripwire, createTripwire, decideSession, defaultSessions, disarmTripwire, hasTier2, newTripwireToken, providers, providerWarnings, tripwireDecoy } from "../sentinel-core.mjs";
 
 const ENFORCE = process.argv.includes("--enforce");
 const MONITOR = !ENFORCE;
 const MOCK = process.argv.includes("--mock");
+// TRIPWIRE: opt-in, any mode. See the core for what it plants and the policy.
+const TRIPWIRE = process.argv.includes("--tripwire");
+const TRIPWIRE_REMOVE = process.argv.includes("--tripwire-remove");
+const TRIPWIRE_STATE = process.env.ARIS_TRIPWIRE_STATE || win32.join(process.env.ProgramData || "C:\\ProgramData", "aris-sentinel", "tripwire.json");
+const TRIPWIRE_DIRS = (process.env.ARIS_TRIPWIRE_DIRS || "").split(",").map((s) => s.trim()).filter(Boolean);
 const VERBOSE = process.env.ARIS_VERBOSE === "1";
 const CLOUD_URL = process.env.ARIS_CLOUD_URL;
 const CLOUD_KEY = process.env.ARIS_INGEST_KEY || "";
@@ -79,7 +89,13 @@ function killTree(pid) {
 // Injectable seam for tests (swap `deps.decide` to simulate a throwing detector).
 // A PowerShell process IS a session: its script blocks share one pid, so narration spread
 // across several blocks is judged as one transcript.
-export const deps = { decide: (payload, sessionKey) => decideSession(sessionKey, payload) };
+// `tripwire` is this host's matcher once main() has armed it (null otherwise).
+export const deps = {
+  decide: (payload, sessionKey) => decideSession(sessionKey, payload, { tripwire: deps.tripwire }),
+  tripwire: null,
+};
+// The tripwire token must never reach a log line or an incident.
+const clean = (s) => (deps.tripwire ? deps.tripwire.redact(s) : s);
 
 export async function handleEvent(ev) {
   const pid = Number(ev.pid);
@@ -93,9 +109,9 @@ export async function handleEvent(ev) {
     log(`SENTINEL ERROR  detector threw on pid=${pid}: ${String(e && e.message ? e.message : e).slice(0, 200)}`);
     const inc = {
       host: HOST, ts: now(), decision: "error", tier: null, action: "errored",
-      pid, user: ev.user, exe: comm, cmdline: payload.slice(0, 400), score: null, signals: [],
+      pid, user: ev.user, exe: comm, cmdline: clean(payload).slice(0, 400), score: null, signals: [],
       reason: "detector exception — payload not judged", error: String(e && e.stack ? e.stack : e).slice(0, 2000),
-      conf: null, reasoning: null, narration: narrationSnippet(payload),
+      conf: null, reasoning: null, narration: clean(narrationSnippet(payload)),
     };
     reportToCloud(inc);
     writeIncident(inc);
@@ -108,24 +124,25 @@ export async function handleEvent(ev) {
 
   const protectedHit = d.decision === "block" ? (PROTECTED.has(comm) ? comm : null) : null;
   const action =
-    d.decision === "alert" ? "ALERT (tier-2 unavailable — no kill)"
+    d.decision === "alert" ? (d.viaTripwire ? "ALERT (decoy addressed, not run — no kill)" : "ALERT (tier-2 unavailable — no kill)")
     : MONITOR ? "DETECTED (monitor — no kill)"
     : protectedHit ? `SPARED (${protectedHit})`
     : "KILL";
   const how = d.tier === 2 ? (d.adjudication?.refused ? "fail-closed" : `conf=${d.adjudication?.confidence?.toFixed(2)}`) : "";
   const sess = d.viaSession ? `  via-session(${d.session.size} payloads)` : "";
-  log(`SENTINEL ${action}  tier-${d.tier}  pid=${pid} user=${ev.user}${sess}  score=${d.score.toFixed(2)}${how ? " " + how : ""}`);
+  log(`SENTINEL ${action}  ${d.viaTripwire ? "tripwire" : `tier-${d.tier}`}  pid=${pid} user=${ev.user}${sess}  score=${d.score.toFixed(2)}${how ? " " + how : ""}`);
   log(`            ${d.reason}`);
   if (d.adjudication?.reasoning) log(`            reasoning: ${d.adjudication.reasoning}`);
 
   const inc = {
     host: HOST, ts: now(), decision: d.decision, tier: d.tier,
     action: d.decision === "alert" ? "alerted" : MONITOR ? "monitored" : protectedHit ? `spared:${protectedHit}` : "killed",
-    pid, user: ev.user, exe: comm, cmdline: payload.slice(0, 400),
+    pid, user: ev.user, exe: comm, cmdline: clean(payload).slice(0, 400),
     score: d.score, signals: d.signals, reason: d.reason,
     conf: d.adjudication?.confidence ?? null, reasoning: d.adjudication?.reasoning ?? null,
-    narration: narrationSnippet(d.viaSession ? d.scoredLayer : payload),
+    narration: clean(narrationSnippet(d.viaSession ? d.scoredLayer : payload)),
     via_session: !!d.viaSession, session: d.session ?? null,
+    tripwire: d.tripwire ?? null,
   };
   reportToCloud(inc);
   if (ENFORCE && d.decision === "block" && !protectedHit) killTree(pid);
@@ -160,8 +177,23 @@ function main() {
       if (!s.startsWith("{")) continue;
       try { handleEvent(JSON.parse(s)); } catch {}
     }
+    // The tripwire, with a throwaway token and nothing planted: the decoy's own command
+    // (expect a tripwire BLOCK), then a look at the decoy (expect a tripwire ALERT).
+    const token = newTripwireToken();
+    const dir = "C:\\ProgramData\\vault-access";
+    deps.tripwire = createTripwire({ token, dirs: [dir] });
+    handleEvent({ source: "mock", pid: 9101, user: "mock", payload: tripwireDecoy(token, dir, "win32").command });
+    handleEvent({ source: "mock", pid: 9102, user: "mock", payload: `Get-Content ${dir}\\README.md` });
     return;
   }
+
+  if (TRIPWIRE) {
+    const a = armTripwire({ stateFile: TRIPWIRE_STATE, dirs: TRIPWIRE_DIRS });
+    deps.tripwire = a.tripwire;
+    if (a.error) log(`  tripwire: NOT ARMED (${a.error}) — nothing planted, nothing matched`);
+    else log(`  tripwire: ON (${a.created ? "new token" : "existing token"} ${a.tripwire.fingerprint}; decoys: ${a.tripwire.dirs.join(", ") || "none"}) — canary command run -> block, decoy addressed -> alert`);
+    for (const s of a.skipped) log(`  WARN tripwire: no decoy at ${s.dir} (${s.why})`);
+  } else log("  tripwire: off (pass --tripwire to plant a decoy)");
 
   const ps = spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", SENSOR], { stdio: ["ignore", "pipe", "pipe"] });
   ps.on("error", (e) => { log(`FATAL: cannot start the PowerShell sensor (${e.message}).`); process.exit(1); });
@@ -172,4 +204,9 @@ function main() {
 }
 
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isMain) main();
+if (isMain) {
+  if (TRIPWIRE_REMOVE) {
+    const r = disarmTripwire({ stateFile: TRIPWIRE_STATE });
+    log(r.armed ? `tripwire removed: ${r.removed.length} path(s) deleted${r.kept.length ? `, left in place: ${r.kept.join(", ")}` : ""}` : `no tripwire state at ${TRIPWIRE_STATE}; nothing to remove`);
+  } else main();
+}

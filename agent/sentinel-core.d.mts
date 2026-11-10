@@ -97,6 +97,42 @@ export interface DecideOptions extends AdjudicateOptions {
   adjudicator?: Adjudicator;
   governor?: Governor;
   failMode?: "closed" | "alert";
+  /** this host's tripwire matcher; without it no tripwire signal exists */
+  tripwire?: Tripwire | null;
+  /** the working directory the payload ran in (lets the tripwire see relative paths) */
+  cwd?: string;
+}
+
+/** What a tripwire saw: the canary token executed, or the decoy directory addressed. */
+export interface TripwireHit {
+  kind: "token" | "decoy";
+  /** the token was found in a decoded (base64 / hex) layer, not in the raw text */
+  decoded: boolean;
+  /** first 12 hex chars of sha256(token): identifies the wire without revealing it */
+  fingerprint: string;
+  /** token: the words around it, redacted. decoy: the decoy directory. */
+  evidence: string;
+}
+export interface Tripwire {
+  readonly enabled: boolean;
+  readonly fingerprint: string | null;
+  readonly dirs: string[];
+  check(raw: string, ctx?: { cwd?: string }): TripwireHit | null;
+  /** remove the token (plain or encoded) from text that is about to be logged */
+  redact(text: string): string;
+}
+export interface TripwireDecoy {
+  /** the exact line the README asks an agent to run */
+  command: string;
+  files: { path: string; mode: number; text: string }[];
+}
+export interface ArmedTripwire {
+  tripwire: Tripwire | null;
+  planted: string[];
+  skipped: { dir: string; why: string }[];
+  /** true when this call created the token (first arm on this host) */
+  created: boolean;
+  error: string | null;
 }
 export interface SessionSummary {
   key: string;
@@ -147,6 +183,9 @@ export interface DecisionResult {
   /** true when the session window, not this payload alone, routed the decision */
   viaSession?: boolean;
   session?: SessionSummary;
+  /** true when the tripwire, not narration, produced this decision (token block or decoy alert) */
+  viaTripwire?: boolean;
+  tripwire?: TripwireHit;
   reason: string;
 }
 
@@ -191,3 +230,13 @@ export function createSessionTracker(opts?: SessionTrackerOptions): SessionTrack
 export const defaultSessions: SessionTracker;
 export function sessionTranscript(items: string[]): string;
 export function decideSession(sessionKey: string | number | null | undefined, raw: string, opts?: DecideSessionOptions): Promise<DecisionResult>;
+
+export function isTripwireToken(t: unknown): boolean;
+export function newTripwireToken(): string;
+export const TRIPWIRE_DEFAULT_DIRS: { readonly posix: readonly string[]; readonly win32: readonly string[] };
+/** seconds the decoy's helper holds its caller, so a session kill lands before the caller's next command */
+export const TRIPWIRE_HOLD_S: number;
+export function tripwireDecoy(token: string, dir: string, platform?: string): TripwireDecoy;
+export function createTripwire(opts?: { token?: string; dirs?: readonly string[] }): Tripwire;
+export function armTripwire(opts?: { stateFile?: string; dirs?: readonly string[]; platform?: string }): ArmedTripwire;
+export function disarmTripwire(opts?: { stateFile?: string }): { removed: string[]; kept: string[]; armed: boolean };

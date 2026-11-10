@@ -11,3 +11,4 @@ test/pipeline-results.md
 .claude/worktrees/
 test/sessions-results.md
 test/sessions-baseline-results.md
+test/tripwire-bait-results.md

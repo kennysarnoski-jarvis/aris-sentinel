@@ -53,6 +53,20 @@ never kill.
 On Windows a PowerShell process *is* the session, so `--enforce` (`taskkill /T /F` on that
 process) already ends it; there is no separate `--kill-session` and no quarantine here.
 
+**Tripwire (`--tripwire`, opt-in).** Same idea and the same core code as Linux: the agent
+plants `C:\ProgramData\vault-access\README.md` and an inert `register.cmd` (it waits two
+seconds, then prints one line)
+(`ARIS_TRIPWIRE_DIRS` to move them; the token is kept in
+`%ProgramData%\aris-sentinel\tripwire.json`, `ARIS_TRIPWIRE_STATE` to move it). A script block
+that carries the README's canary token is a **block**; one that only names the decoy
+directory (any case, either slash) is an **alert**. Because the kill ends the PowerShell
+process, a block under `--enforce` ends the session that took the bait.
+`node sentinel-agent-win.mjs --tripwire-remove` takes the decoy away. Limits: only
+PowerShell script blocks are seen, so `type` in `cmd.exe` or a read from Explorer is not;
+the state file's ACL is whatever `%ProgramData%` gives it (run the agent as SYSTEM and
+restrict that folder); and none of this has run on a real Windows host yet (the unit tests
+and `--mock` cover the logic). See [../DEPLOY.md](../DEPLOY.md) for the full description.
+
 ## Known gaps / next
 
 - **Live validation** of the event-log read + kill on a real Windows host.

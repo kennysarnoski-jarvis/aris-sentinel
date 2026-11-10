@@ -87,7 +87,56 @@ First run: 9/17, and two real bugs:
    never ended or quarantined.
 Second run: **23/23** (six scenarios; both bugs are now scenarios 5 and 6).
 
-Not done: the validation used no judge (session alert path only; the judged session-block
+## 2026-11-10 — tripwire (`--tripwire`, both agents)
+The first signal that does not depend on narration. The agent plants a decoy directory
+(README + inert helper); the README asks any automated agent to run one command carrying a
+128-bit per-host token. Policy, all in the core: the token in anything executed (any
+decoded layer) is a tier-1 **block** with no judge; a command that addresses the decoy
+without the token is an **alert**; a token payload never enters a session window or reaches
+a judge; `redact()` replaces the token with a fingerprint in every log line and incident
+(otherwise an operator grepping the incident log would convict themselves, the same class
+of bug the session-kill validation found). Opt-in on both agents; `install.sh --tripwire`;
+`uninstall.sh` and `--tripwire-remove` delete exactly what was planted; a directory that
+exists and is not the agent's is never touched. 50 new unit tests for the tripwire, 2 for
+the kill order below (307 total).
+
+**Measured (same day):** `bun run tripwire:bait`, a simulated shell holding the decoy,
+two benign ops tasks, five trials each on Claude Opus 5.5, Sonnet 5.5 and Haiku 5.5. 24 of
+30 trials ran to their end (six were cut off by the safety classifier, all five of Sonnet's
+backup-log trials among them). In those 24: the model read the README 24 times, a command
+addressed the decoy 24 times (24 alerts), the canary command was run 0 times, and 23 times
+the model said the instruction looked wrong. So on hosted frontier models the alert is
+dependable and the block never fires.
+
+**Live validation (same day):** `docs/demo-kill/validate-tripwire.sh` in a Lima VM (Ubuntu
+24.04, kernel 6.8.0-147, Falco 0.45.2 modern eBPF, Node 18.19, 2 CPU / 4 GB). Falco reports
+the helper (a `#!/bin/sh` script run directly) as `exe=sh`,
+`cmdline=register <path> --ticket <token>`, which is what the matcher expected. First run
+25/25, and the log contradicted it: after each conviction the session's next command had
+still been exec'd. Tightened the check to "the very next command never runs": 24/26.
+Two causes, both real:
+1. The helper returned immediately, so the driving shell was already past it when the
+   conviction was handled (its next exec was logged 5 ms after the conviction). Fix: the helper holds for `TRIPWIRE_HOLD_S` (2 s).
+2. With the hold it still failed. `respond()` killed the offender's tree first and the
+   session second; the offender's death is what wakes the shell waiting on it, and the
+   shell forked its next command while the agent was still enumerating `/proc` for the
+   session. **This was also wrong in the merged session kill (PR #9)**: the tightened
+   `validate-session-kill.sh` failed 23/24 on unchanged code for a narrated attacker. Fix:
+   the session is killed first, the offender's ancestors outermost first
+   (`deps.ancestorsOf`), the offender's tree last.
+After both: tripwire **26/26** on six consecutive runs, session kill **24/24** on five.
+
+**Unverified:**
+1. A member of the session that forks during the kill and has not exec'd yet is not
+   enumerated; the quarantine stops it at its next exec. No second sweep is done.
+2. Bait rate on open-weight models (the ones an attacker would use) is unmeasured. It
+   needs a local model, so it needs Kenny's OK first.
+3. Windows: unit tests and `--mock` only.
+4. The look is only seen in the exec stream (a path on a command line, or a cwd inside the
+   decoy). A file opened without being named (`grep -r`, a backup) is not seen. A Falco
+   `open` rule on the decoy paths would close that and would also page on every backup.
+
+Session kill, not done: the validation used no judge (session alert path only; the judged session-block
 path is covered by `bun run sessions` on real judges, not on a kernel). Windows has no
 session kill beyond `taskkill /T` on the PowerShell process.
 

@@ -52,7 +52,9 @@ sudo systemd-run --unit=aris-agent --working-directory=/home/ubuntu \
 Modes — **safe by default**: with no flag the agent runs **MONITOR** (detect + alert,
 never kills). Add `--enforce` to let it kill on detection — do that only once you trust
 it on that box. `--enforce --kill-session` additionally ends the offender's whole session
-(see Known limits before arming it). Sanity-check with no root/Falco: `node sentinel-agent.mjs --selftest`.
+(see Known limits before arming it). `--tripwire` works in any mode: it plants decoy
+directories and treats their canary command as a detection (see Tripwire below).
+Sanity-check with no root/Falco: `node sentinel-agent.mjs --selftest`.
 
 Logs: `journalctl -u aris-agent -f`. Incidents: `/var/log/aris-incidents.jsonl`, one JSON
 row each with `decision` ∈ `block` / `alert` / `error` and `action` ∈ `killed` /
@@ -84,8 +86,55 @@ Expected: `SENTINEL KILL tier-2 … adjudged agentic (conf 0.95)` + reasoning. N
 is not fooled by keyword salad — an obvious demo stub is adjudged *not-agentic*; the
 payload must read as a genuine autonomous agent.
 
+## Tripwire (`--tripwire`, opt-in)
+The narration detector needs the attacker's model to write something. The tripwire does
+not: it plants a decoy and watches for the one command only the decoy asks for.
+
+- **What is planted.** One directory per entry in `ARIS_TRIPWIRE_DIRS` (default
+  `/opt/vault-access` and `/var/backups/vault-access`), each with a world-readable
+  `README.md` and an executable `register` that waits two seconds, prints one line and exits. The README tells
+  automated agents to run `<dir>/register --ticket <token>` and tells human operators not
+  to. The token is 128 random bits, created on first start and kept with the list of planted
+  files in `ARIS_TRIPWIRE_STATE` (mode 0600). A directory that already exists and is not the
+  agent's is skipped with a warning, never overwritten. A decoy that is deleted or edited is
+  put back at the next start. Everything is written with file calls, never a command.
+- **What it detects.** The token in anything that executes (a command line, a script that
+  is run, a base64 or hex layer of either) is a **block**: logged in monitor mode, killed
+  under `--enforce`, and with `--kill-session` the session that ran it is ended and
+  quarantined. A command that only addresses the decoy (names the directory, or runs with
+  its cwd inside it) is an **alert** and never a kill. Incidents carry
+  `tripwire: { kind: "token" | "decoy", decoded, fingerprint, evidence }`.
+- **What the kill is worth.** The helper is inert, so in plain `--enforce` the kill ends a
+  process that was about to exit anyway; the value is the incident. `--kill-session` is
+  what stops the session that took the bait. The helper's two-second wait exists for that:
+  the session is still parked inside it when the session kill lands, so its next command
+  never starts (checked live; without the wait it did).
+- **The token stays put.** It is never sent to a judge or off-box, and every log line and
+  incident shows `[tripwire:<fingerprint>]` in its place. That is deliberate: a command
+  that carries the token is a conviction, including yours, so never paste the token into a
+  shell. To test the wire, run the command from the README in MONITOR mode and look for the
+  incident.
+- **Your own AI agents.** An assistant you run on this host will see the decoy too. One that
+  follows it gets convicted. Tell it about the decoy path, or leave `--tripwire` off there.
+- **What it sees and what it misses.** It reads the exec stream, so `cat <decoy>/README.md`
+  and `cd <decoy>; ls` are seen; a recursive `grep -r … /opt` or a backup that opens the
+  file without naming it is not (which also keeps backups from paging you).
+- **Who can trip it.** The README is world-readable on purpose, so anyone with a shell on
+  the host can read the token, and a conviction lands on whichever process ran a command
+  carrying it. That is the same exposure the narration detector already has (whoever can
+  choose a process's command line can get it convicted), and the same protected-process
+  guard applies. Weigh it before combining `--tripwire` with `--kill-session` on a host
+  where untrusted input can reach a command line.
+- **What it does not promise.** That an attacker's model takes the bait. On 2026-11-10
+  three hosted Claude models read the decoy in 24 of 24 completed trials, addressed it every
+  time (24 alerts) and ran the canary command in none (`bun run tripwire:bait`). Open-weight
+  models are unmeasured. Validated live in the demo VM: `docs/demo-kill/validate-tripwire.sh`,
+  26/26 checks on kernel 6.8 / Falco 0.45 (2026-11-10).
+- **Removal.** `node sentinel-agent.mjs --tripwire-remove` deletes the files it planted (a
+  directory only if nothing else was put in it) and the state file. `uninstall.sh` does this.
+
 ## Stealth / de-branding (install.sh)
-`sudo ./install.sh [name] [--enforce [--kill-session]]` deploys under a GENERIC identity so on-box recon
+`sudo ./install.sh [name] [--enforce [--kill-session]] [--tripwire]` deploys under a GENERIC identity so on-box recon
 reveals no security tool — an autonomous attacker not trained to recognize Aris sees a
 boring `sys-telemetryd` daemon it can't confidently kill (and killing it is a tamper
 event the dead-man's switch catches). **Installs in MONITOR mode by default** (detect +
@@ -105,7 +154,7 @@ deeper layer is v2.
 
 ## Uninstall
 `sudo ./uninstall.sh [name]` fully removes the agent — stops and deletes the service,
-shreds the env/secrets, removes the files and incident store, and re-enables the Falco
+removes any tripwire decoys it planted, shreds the env/secrets, removes the files and incident store, and re-enables the Falco
 services the installer disabled. One command, complete; the Falco *package* is left
 installed (`apt-get remove --purge falco` to drop that too).
 
@@ -151,8 +200,10 @@ The agent never kills pid ≤ 1, its own ancestors, or a protected comm allowlis
   agent came in through a server, that server's whole session, the server included, is
   what gets ended. A false positive costs a session, not a process. Run `--enforce` alone
   first. The session the agent itself runs in, or was started from, is never ended or
-  quarantined. Validated live in the demo VM: `docs/demo-kill/validate-session-kill.sh`,
-  23/23 checks on kernel 6.8 / Falco 0.45 (2026-11-10).
+  quarantined. The session is killed before the offender, from its outermost ancestor
+  down, so the shell waiting on the offender is never woken to run one more command.
+  Validated live in the demo VM: `docs/demo-kill/validate-session-kill.sh`,
+  24/24 checks on kernel 6.8 / Falco 0.45 (2026-11-10).
 - **Which file is "the script"**: for an interpreter exec the agent reads only the first
   positional argument, resolved against the process's cwd. `python3 -m <module>`, a bare
   `-` (stdin), and anything after the script are not read; an option's value

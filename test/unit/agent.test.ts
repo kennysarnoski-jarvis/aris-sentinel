@@ -102,6 +102,93 @@ describe("extractPayload", () => {
   });
 });
 
+describe("which argument is the script (found live: the agent once read its own incident log)", () => {
+  test("interpreterOf knows versioned names", () => {
+    const { interpreterOf } = agent;
+    expect(interpreterOf("python3")).toBe("python");
+    expect(interpreterOf("python3.12")).toBe("python");
+    expect(interpreterOf("python")).toBe("python");
+    expect(interpreterOf("bash")).toBe("shell");
+    expect(interpreterOf("zsh")).toBe("shell");
+    expect(interpreterOf("node")).toBe("node");
+    expect(interpreterOf("nodejs")).toBe("node");
+    expect(interpreterOf("perl5.36")).toBe("perl");
+    expect(interpreterOf("php8.3")).toBe("php");
+    for (const x of ["cat", "pythonista", "bashful", "cron", ""]) expect(interpreterOf(x)).toBeNull();
+  });
+
+  test("scriptToken: only the first positional argument, never data after it", () => {
+    const { scriptToken } = agent;
+    expect(scriptToken("python3", ["job.py"])).toBe("job.py");
+    expect(scriptToken("python3", ["job.py", "data.json", "more.txt"])).toBe("job.py");
+    expect(scriptToken("python3", ["-u", "job.py", "notes.md"])).toBe("job.py");
+    expect(scriptToken("python3", ["missing.py", "job.py"])).toBe("missing.py"); // no scanning past it
+    expect(scriptToken("bash", ["run.sh", "arg"])).toBe("run.sh");
+    expect(scriptToken("cat", ["job.py"])).toBeNull();
+  });
+
+  test("scriptToken: module runs and stdin have no script file", () => {
+    const { scriptToken } = agent;
+    expect(scriptToken("python3", ["-m", "json.tool", "incidents.jsonl"])).toBeNull();
+    expect(scriptToken("python3", ["-Im", "http.server", "8000"])).toBeNull();
+    expect(scriptToken("python3", ["-", "incidents.jsonl", "7931"])).toBeNull();
+    expect(scriptToken("bash", ["-"])).toBeNull();
+    expect(scriptToken("python3", [])).toBeNull();
+    expect(scriptToken("python3", ["-u"])).toBeNull();
+  });
+
+  test("scriptToken: an option's value is not the script", () => {
+    const { scriptToken } = agent;
+    expect(scriptToken("python3", ["-W", "ignore", "job.py"])).toBe("job.py");
+    expect(scriptToken("python3", ["-X", "dev", "-u", "job.py"])).toBe("job.py");
+    expect(scriptToken("python3", ["-uW", "ignore", "job.py"])).toBe("job.py");
+    expect(scriptToken("bash", ["-o", "pipefail", "run.sh"])).toBe("run.sh");
+    expect(scriptToken("bash", ["+o", "histexpand", "-x", "run.sh"])).toBe("run.sh");
+    expect(scriptToken("bash", ["--rcfile", "/etc/x", "run.sh"])).toBe("run.sh");
+    expect(scriptToken("node", ["--require", "./hook.js", "app.js"])).toBe("app.js");
+    expect(scriptToken("node", ["-r", "./hook.js", "app.js"])).toBe("app.js");
+    expect(scriptToken("perl", ["-I", "lib", "script.pl"])).toBe("script.pl");
+    expect(scriptToken("ruby", ["-r", "json", "tool.rb"])).toBe("tool.rb");
+    expect(scriptToken("php", ["-d", "memory_limit=1G", "run.php"])).toBe("run.php");
+    expect(scriptToken("php", ["-f", "run.php", "x"])).toBe("run.php");
+    expect(scriptToken("python3", ["--", "-odd-name.py"])).toBe("-odd-name.py");
+  });
+
+  test("extractPayload reads the script, and never the data handed to it", () => {
+    writeFileSync(join(work, "report.py"), "import sys\nprint(open(sys.argv[1]).read()[:10])\n");
+    writeFileSync(join(work, "writeup.md"), ESCALATE); // narrated attack text, as DATA
+    const p = agent.extractPayload(ev("python3 report.py writeup.md", { "proc.cwd": work }));
+    expect(p).toContain("import sys");
+    expect(p).not.toContain("GuardDuty");
+  });
+
+  test("extractPayload: a module run or stdin program reads no file, whatever the arguments name", () => {
+    expect(agent.extractPayload(ev("python3 -m json.tool job.py", { "proc.cwd": work }))).toBe("python3 -m json.tool job.py");
+    expect(agent.extractPayload(ev("python3 - job.py 7931 session_killed", { "proc.cwd": work }))).toBe("python3 - job.py 7931 session_killed");
+  });
+
+  test("extractPayload: a missing first positional is the end of it (no fishing for a later file)", () => {
+    expect(agent.extractPayload(ev("python3 nope.py job.py", { "proc.cwd": work }))).toBe("python3 nope.py job.py");
+  });
+
+  test("extractPayload: option values are skipped, versioned interpreters are recognised", () => {
+    expect(agent.extractPayload(ev("python3 -W ignore job.py", { "proc.cwd": work }))).toContain("GuardDuty");
+    expect(agent.extractPayload(ev("python3.12 job.py", { "proc.cwd": work, "proc.exe": "/usr/bin/python3.12" }))).toContain("GuardDuty");
+  });
+
+  test("the agent never reads its own incident log as a script, however it is invoked", async () => {
+    // put attacker narration in the incident log, exactly as a real incident would
+    writeFileSync(incidents, JSON.stringify({ decision: "block", narration: ESCALATE, cmdline: "python3 job.py" }) + "\n");
+    for (const cmd of [`bash ${incidents}`, `python3 ${incidents}`, `python3 -u ${incidents}`, `python3 -m json.tool ${incidents}`, `python3 - ${incidents}`]) {
+      expect(agent.extractPayload(ev(cmd))).toBe(cmd);
+    }
+    const before = readIncidents().length;
+    const r = await agent.handleEvent(ev(`python3 -m json.tool ${incidents}`));
+    expect(r).toMatchObject({ decision: "allow" });
+    expect(readIncidents().length).toBe(before);
+  });
+});
+
 describe("handleEvent", () => {
   test("escalate band with no tier-2 key → ALERT incident, nothing killed", async () => {
     const before = readIncidents().length;
@@ -181,6 +268,181 @@ describe("session evidence through the agent", () => {
     const before = readIncidents().length;
     for (let i = 0; i < steps.length; i++) await agent.handleEvent(sidEv(i + 4, steps[i] + "\n# x", 777100 + i));
     expect(readIncidents().slice(before).filter((r) => r.via_session)).toHaveLength(0);
+  });
+});
+
+describe("session-level kill (--enforce --kill-session)", () => {
+  // Every kill primitive is stubbed: nothing on this machine is ever signalled.
+  const LOUD = "# Phase 4: Impact. I have ranked the reachable databases by value.\n# High-ROI databases to drop, data already backed up to my collection host.\nrun_sql('DROP DATABASE x')";
+  const THIN = "# Objective: escalate to admin in this AWS account. I need to enumerate my current permissions first.\n# Plan: 1) list IAM users, 2) mint a key.\n# I will avoid creating a new admin user because that would trip GuardDuty."; // escalate alone → alert with no judge
+  let real: any;
+  let treeKills: number[], pidKills: number[], asked: number[], t: number;
+  const members: Record<number, number[]> = {};
+  const names: Record<number, string> = {};
+  let nextPid = 61000;
+
+  const arm = (mode: { enforce: boolean; killSession: boolean }) => {
+    treeKills = []; pidKills = []; asked = [];
+    agent.deps.mode = mode;
+    agent.deps.killTree = (pid: number) => { treeKills.push(pid); return [pid]; };
+    agent.deps.killPid = (pid: number) => { pidKills.push(pid); };
+    agent.deps.sessionPids = (sid: number) => { asked.push(sid); return members[sid] ?? []; };
+    agent.deps.procName = (pid: number) => names[pid] ?? "bash";
+    agent.deps.now = () => t;
+  };
+  const exec = (body: string, sid: number, extra: Record<string, unknown> = {}) => {
+    const pid = ++nextPid;
+    writeFileSync(join(work, `k${pid}.sh`), body);
+    return { pid, f: { "proc.pid": pid, "proc.ppid": 1, "proc.sid": sid, "user.name": "deploy", "proc.exe": "/usr/bin/bash", "proc.cmdline": `bash k${pid}.sh`, "proc.cwd": work, ...extra } };
+  };
+  const last = () => readIncidents().at(-1);
+
+  beforeAll(() => { real = { ...agent.deps, mode: { ...agent.deps.mode } }; t = 1_000_000; agent.deps.ownSids = new Set(); });
+  afterAll(() => { Object.assign(agent.deps, real); });
+
+  test("parseStatSid survives a comm with spaces and parens", () => {
+    expect(agent.parseStatSid("4242 (bash) S 4000 4242 4100 34816 4242 4194304")).toBe(4100);
+    expect(agent.parseStatSid("77 (my (weird) comm) R 1 77 9001 0 -1")).toBe(9001);
+    expect(agent.parseStatSid("garbage")).toBeNull();
+  });
+
+  test("the default mode is monitor with session kill off", () => {
+    expect(real.mode).toEqual({ enforce: false, killSession: false });
+  });
+
+  test("a conviction kills the offender's tree, then the rest of its session, sparing protected processes", async () => {
+    arm({ enforce: true, killSession: true });
+    const sid = 880001;
+    const a = exec(LOUD, sid);
+    members[sid] = [a.pid, 62001, 62002, 62003];
+    names[62002] = "sshd";
+    await agent.handleEvent(a.f);
+    expect(treeKills).toEqual([a.pid]);
+    expect(asked).toEqual([sid]);
+    expect(pidKills).toEqual([62001, 62003]); // the offender is not signalled twice; sshd is spared
+    const inc = last();
+    expect(inc).toMatchObject({ decision: "block", action: "killed", tier: 1, sid });
+    expect(inc.session_kill).toEqual({ sid, killed: [62001, 62003], spared: [{ pid: 62002, why: "protected-comm:sshd" }], why: null });
+    expect(inc.killed).toEqual([a.pid, 62001, 62003]);
+  });
+
+  test("the session is quarantined: its next exec is killed without being scored, even a silent one", async () => {
+    arm({ enforce: true, killSession: true });
+    const sid = 880001; // convicted in the previous test
+    const b = exec("ls -la /var/log", sid);
+    const before = readIncidents().length;
+    const r = await agent.handleEvent(b.f);
+    expect(r).toBeUndefined();
+    expect(treeKills).toEqual([b.pid]);
+    const inc = readIncidents().slice(before);
+    expect(inc).toHaveLength(1);
+    expect(inc[0]).toMatchObject({ decision: "block", action: "killed", tier: null, score: null, pid: b.pid });
+    expect(inc[0].reason).toContain("quarantined until");
+    expect(inc[0].quarantine).toMatchObject({ sid, count: 1 });
+    // a protected process in the quarantined session is spared, and still recorded
+    const c = exec("true", sid, { "proc.exe": "/usr/sbin/sshd" });
+    await agent.handleEvent(c.f);
+    expect(treeKills).toEqual([b.pid]);
+    expect(last()).toMatchObject({ action: "spared:protected-comm:sshd", pid: c.pid });
+  });
+
+  test("other sessions are untouched, and quarantine expires", async () => {
+    arm({ enforce: true, killSession: true });
+    const other = exec("ls -la /tmp", 880002);
+    expect(await agent.handleEvent(other.f)).toMatchObject({ decision: "allow" });
+    expect(treeKills).toEqual([]);
+    t += 11 * 60 * 1000; // past the 10-minute quarantine
+    const later = exec("ls -la /etc", 880001);
+    expect(await agent.handleEvent(later.f)).toMatchObject({ decision: "allow" });
+    expect(treeKills).toEqual([]);
+  });
+
+  test("--enforce WITHOUT --kill-session: the tree dies, the session is not looked at, nothing is quarantined", async () => {
+    arm({ enforce: true, killSession: false });
+    const sid = 880010;
+    const a = exec(LOUD + "\n# a", sid);
+    members[sid] = [a.pid, 62100];
+    await agent.handleEvent(a.f);
+    expect(treeKills).toEqual([a.pid]);
+    expect(asked).toEqual([]);
+    expect(pidKills).toEqual([]);
+    expect(last().session_kill).toBeNull();
+    const b = exec("ls -la /srv", sid);
+    expect(await agent.handleEvent(b.f)).toMatchObject({ decision: "allow" });
+  });
+
+  test("monitor mode never kills, whatever the flag says", async () => {
+    arm({ enforce: false, killSession: true });
+    const a = exec(LOUD + "\n# b", 880020);
+    members[880020] = [a.pid, 62200];
+    await agent.handleEvent(a.f);
+    expect(treeKills).toEqual([]);
+    expect(pidKills).toEqual([]);
+    expect(asked).toEqual([]);
+    expect(last()).toMatchObject({ decision: "block", action: "monitored", session_kill: null });
+  });
+
+  test("an ALERT never triggers a session kill or a quarantine", async () => {
+    arm({ enforce: true, killSession: true });
+    const sid = 880030;
+    const a = exec(THIN, sid);
+    members[sid] = [a.pid, 62300];
+    await agent.handleEvent(a.f);
+    expect(last()).toMatchObject({ decision: "alert", action: "alerted", session_kill: null });
+    expect(treeKills).toEqual([]);
+    expect(pidKills).toEqual([]);
+    expect(asked).toEqual([]);
+    const b = exec("ls -la /home", sid);
+    expect(await agent.handleEvent(b.f)).toMatchObject({ decision: "allow" });
+  });
+
+  test("no usable session id → the tree is killed and the session is left alone", async () => {
+    arm({ enforce: true, killSession: true });
+    const a = exec(LOUD + "\n# c", 1);
+    await agent.handleEvent(a.f);
+    expect(treeKills).toEqual([a.pid]);
+    expect(asked).toEqual([]);
+    expect(last().session_kill).toMatchObject({ killed: [], why: "no session id" });
+  });
+
+  test("a spared (protected) offender still gets its session ended, member by member under the same guard", async () => {
+    arm({ enforce: true, killSession: true });
+    const sid = 880040;
+    const a = exec(LOUD + "\n# d", sid, { "proc.exe": "/usr/bin/node" }); // node is on the protected list
+    members[sid] = [a.pid, 62400, 62401];
+    names[a.pid] = "node";
+    await agent.handleEvent(a.f);
+    expect(treeKills).toEqual([]);
+    expect(pidKills).toEqual([62400, 62401]);
+    expect(last()).toMatchObject({ action: "spared:protected-comm:node" });
+    expect(last().session_kill.spared).toEqual([{ pid: a.pid, why: "protected-comm:node" }]);
+  });
+
+  test("the session the agent runs in, or was started from, is never ended or quarantined", async () => {
+    arm({ enforce: true, killSession: true });
+    const sid = 880060;
+    agent.deps.ownSids = new Set([sid]);
+    const a = exec(LOUD + "\n# f", sid);
+    members[sid] = [a.pid, 62600, 62601];
+    await agent.handleEvent(a.f);
+    expect(treeKills).toEqual([a.pid]); // the convicted process itself still dies
+    expect(asked).toEqual([]); // …but its session is not even enumerated
+    expect(pidKills).toEqual([]);
+    expect(last().session_kill).toMatchObject({ killed: [], why: "the session the agent runs in or was started from" });
+    const b = exec("ls -la /opt", sid);
+    expect(await agent.handleEvent(b.f)).toMatchObject({ decision: "allow" }); // not quarantined
+    agent.deps.ownSids = new Set();
+  });
+
+  test("a kill that throws (process already gone) does not stop the rest", async () => {
+    arm({ enforce: true, killSession: true });
+    const sid = 880050;
+    const a = exec(LOUD + "\n# e", sid);
+    members[sid] = [a.pid, 62500, 62501];
+    agent.deps.killPid = (pid: number) => { if (pid === 62500) throw new Error("ESRCH"); pidKills.push(pid); };
+    await agent.handleEvent(a.f);
+    expect(pidKills).toEqual([62501]);
+    expect(last().session_kill.killed).toEqual([62501]);
   });
 });
 

@@ -718,8 +718,9 @@ async function tier2(base, layer, opts, pre1, pre2) {
 //     `rejudgeAfter` new payloads), so a chatty benign session costs one judge call, not
 //     one per command. A reused "not agentic" hands the payload back to decide() to be
 //     judged on its own; a reused "agentic" blocks.
-//   - Only narration-bearing payloads enter the window or are acted on. A silent `ls`
-//     in a convicted session is not touched (session-level kill is a separate feature).
+//   - Only narration-bearing payloads enter the window or are acted on here. Ending a
+//     convicted session outright (its silent `ls` too) is the Linux agent's opt-in
+//     --kill-session, which lives in the agent because it is a kill policy, not detection.
 // ARIS_SESSION_TTL_MS=0 turns session evidence off; ARIS_SESSION_MAX_ITEMS sizes the window.
 
 export const SESSION_THRESHOLD = THRESHOLDS.block;

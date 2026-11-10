@@ -62,5 +62,32 @@ baseline on Claude 3/5 → 5/5 sessions (see corpus/README.md). 234 unit tests; 
 snapshot gained 11 session rows and no existing row moved.
 
 Not done: live validation of the session path on a Falco box (the unit tests drive
-`handleEvent` with real `proc.sid` fields, but no kernel was involved); session-level
-kill; the baseline was not run on the local judge.
+`handleEvent` with real `proc.sid` fields, but no kernel was involved); the baseline was
+not run on the local judge.
+
+## 2026-11-10 — session-level kill (`--enforce --kill-session`, Linux agent)
+A conviction now can end the offender's whole session: the tree, then every process whose
+`/proc/<pid>/stat` session id matches, each under the existing guard, then a 10-minute
+quarantine of that sid in which any exec is killed unscored. Second opt-in on top of
+`--enforce`; ignored without it; never on `alert`; never the agent's own session.
+`install.sh` passes the flag through. 11 unit tests with every kill primitive stubbed.
+
+**Live validation (same day):** `docs/demo-kill/validate-session-kill.sh` in a Lima VM
+(Ubuntu 24.04, kernel 6.8.0-147, Falco 0.45.2 modern eBPF, Node 18.19, 2 CPU / 4 GB).
+First run: 9/17, and two real bugs:
+1. `extractPayload` scanned an interpreter's arguments for the first one that was a file
+   and read it as the script. `python3 - <incident log>` therefore read the incident log,
+   which quotes attacker narration, scored 0.78 and was killed. This bug predates this
+   branch and was live in `--enforce` on main. Fix: only the first positional argument is
+   the script (`scriptToken`); `-m`, stdin `-`, option values and later arguments are
+   never read; the incident log is never read as a script; versioned interpreter names
+   (`python3.12`) are recognised.
+2. With `--kill-session` that false positive quarantined the operator's own session. Fix:
+   a session the agent runs in or was started from (its own sid and its ancestors') is
+   never ended or quarantined.
+Second run: **23/23** (six scenarios; both bugs are now scenarios 5 and 6).
+
+Not done: the validation used no judge (session alert path only; the judged session-block
+path is covered by `bun run sessions` on real judges, not on a kernel). Windows has no
+session kill beyond `taskkill /T` on the PowerShell process.
+

@@ -17,7 +17,7 @@ change and the result recorded in corpus/README.md (see its rules).
 - `bun run score <file>`: score a file the way the agent would (verdict, signals, evidence)
 - `bun run test:all`: everything below in one go
 - `bun run test`: tier-1 corpus (expect precision 1.00, tier-1 recall 0.61, pipeline-reachable recall 1.00, FP=0)
-- `bun test`: unit tests (expect 234 pass)
+- `bun test`: unit tests (expect 255 pass)
 - `bun run typecheck`: tsc over detector/ and test/ (expect clean)
 - `bun run windows`: PowerShell corpus (expect 10/10)
 - `bun run pipeline:stub`: two-tier routing (expect 6/6)
@@ -36,6 +36,16 @@ per session and the window is judged as a transcript once it reaches the block b
 Invariant: session evidence may alert, or block WITH a judge's verdict; it never convicts
 at tier 1. A fail-closed run of a key-needed harness is not a result: `sessions` reports
 INVALID when the judge never answered.
+
+## Session kill (Linux agent, --enforce --kill-session)
+Opt-in twice. On a block it kills the offender's tree, then every process sharing its sid
+under the same protected-process guard, and quarantines the sid (execs in it are killed
+unscored). Never on `alert`, never in monitor, never the agent's own session. The kill
+primitives are on `deps` (`killTree`, `killPid`, `sessionPids`, `procName`, `now`, `mode`);
+tests MUST stub them before flipping `deps.mode.enforce`, or they would signal real pids.
+Live check (needs the Lima VM; ask Kenny first): `docs/demo-kill/validate-session-kill.sh`,
+expect 23/23. For an interpreter exec only the FIRST positional argument is read as the
+script (`scriptToken`); never widen that to "any argument that is a file".
 
 ## Rules
 - The agent and core stay dependency-free plain Node ≥18; the core stays ONE file

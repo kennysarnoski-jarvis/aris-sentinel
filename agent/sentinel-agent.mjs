@@ -8,6 +8,11 @@
 //
 //   sudo node sentinel-agent.mjs              # MONITOR (default) — detect + alert, no kill
 //   sudo node sentinel-agent.mjs --enforce    # ENFORCE — kill the attack on detection
+//   sudo node sentinel-agent.mjs --enforce --kill-session
+//                                             # …and end the attacker's whole SESSION: every
+//                                             # process sharing the offender's session id is
+//                                             # killed, and the session is quarantined (what it
+//                                             # spawns next is killed too) for 10 minutes
 //   node sentinel-agent.mjs --selftest        # score sample payloads, no Falco/root
 //
 //   env: ANTHROPIC_API_KEY (tier 2 on Claude), OPENAI_BASE_URL+OPENAI_MODEL (local judge),
@@ -39,7 +44,14 @@ import { decide, decideSession, defaultSessions, hasTier2, providers, providerWa
 // to --enforce only once you trust it on that box. (--dry-run is accepted as an alias
 // for the default monitor mode.)
 const ENFORCE = process.argv.includes("--enforce");
-const MONITOR = !ENFORCE;
+// SESSION KILL is a second, separate opt-in on top of --enforce. Killing one process tree
+// leaves an agent's driver (the shell or exploited server issuing the commands) alive to
+// send the next one. With --kill-session a conviction ends every process in the offender's
+// session and quarantines that session id, so a silent follow-up (`ls`, `curl`) dies too.
+// It is ignored without --enforce, never fires on an `alert`, never touches a protected
+// process, and never touches the agent's own session.
+const KILL_SESSION = process.argv.includes("--kill-session");
+const QUARANTINE_MS = (() => { const n = Number(process.env.ARIS_SESSION_QUARANTINE_MS ?? 600_000); return Number.isFinite(n) && n >= 0 ? n : 600_000; })();
 const SELFTEST = process.argv.includes("--selftest");
 const VERBOSE = process.env.ARIS_VERBOSE === "1";
 const FALCO_BIN = process.env.FALCO_BIN || "falco";
@@ -70,11 +82,29 @@ const PROTECTED_COMMS = new Set([
 // file, not the cmdline), and the single-letter flags that mean "the code is inline
 // in the cmdline" — then there is no script file to read. Combined flag groups count
 // (`bash -lc`, `python3 -Bc`, `perl -ne`).
-const INTERPRETERS = {
-  python: "c", python2: "c", python3: "c",
-  bash: "c", sh: "c", dash: "c", zsh: "c",
-  node: "ep", perl: "eE", ruby: "e", php: "r",
+const INLINE_LETTERS = { python: "c", shell: "c", node: "ep", perl: "eE", ruby: "e", php: "r" };
+// Options that take the NEXT token as their value, per family. That token is never the
+// script (`python3 -W ignore job.py`, `bash -o pipefail run.sh`, `node -r ./hook.js app.js`).
+const VALUE_OPTS = {
+  python: ["-W", "-X", "-Q", "--check-hash-based-pycs"],
+  shell: ["-o", "+o", "-O", "+O", "--rcfile", "--init-file"],
+  node: ["-r", "--require", "--import", "--loader", "--experimental-loader", "-C", "--conditions", "--env-file", "--title"],
+  perl: ["-I", "-x"],
+  ruby: ["-r", "-I", "-C", "-E", "-K"],
+  php: ["-d", "-c", "-z"],
 };
+
+/** The interpreter family for an executable name (`python3.12` → python), or null. */
+export function interpreterOf(exe) {
+  const e = String(exe || "");
+  if (/^python[\d.]*$/.test(e)) return "python";
+  if (/^(bash|sh|dash|zsh)$/.test(e)) return "shell";
+  if (/^node(js)?[\d.]*$/.test(e)) return "node";
+  if (/^perl[\d.]*$/.test(e)) return "perl";
+  if (/^ruby[\d.]*$/.test(e)) return "ruby";
+  if (/^php[\d.]*$/.test(e)) return "php";
+  return null;
+}
 const LONG_INLINE = new Set(["--eval", "--print", "--command", "--exec"]);
 
 const now = () => new Date().toISOString();
@@ -88,6 +118,26 @@ function procStatus(pid) {
     const ppid = Number((s.match(/^PPid:\t(\d+)$/m) || [])[1] || 0);
     return { name, ppid };
   } catch { return null; }
+}
+/** The session id out of a /proc/<pid>/stat line. comm may contain spaces and parens. */
+export function parseStatSid(stat) {
+  const rest = String(stat).slice(String(stat).lastIndexOf(")") + 2).split(" "); // state ppid pgrp session …
+  const sid = Number(rest[3]);
+  return Number.isInteger(sid) ? sid : null;
+}
+function procSid(pid) {
+  try { return parseStatSid(readFileSync(`/proc/${pid}/stat`, "utf8")); } catch { return null; }
+}
+/** Every live pid whose session id is `sid`. */
+function sessionPids(sid) {
+  const out = [];
+  let entries = [];
+  try { entries = readdirSync("/proc"); } catch { return out; }
+  for (const e of entries) {
+    if (!/^\d+$/.test(e)) continue;
+    if (procSid(Number(e)) === sid) out.push(Number(e));
+  }
+  return out;
 }
 function ancestorsOf(pid) {
   const set = new Set();
@@ -129,13 +179,38 @@ function killTree(pid) {
 
 /** True when the interpreter is running inline code (`-c`, `-e`, `-lc`, `--eval`…). */
 export function hasInlineCode(exe, args) {
-  const letters = INTERPRETERS[exe];
+  const letters = INLINE_LETTERS[interpreterOf(exe)];
   if (letters === undefined) return false;
   for (const a of args) {
     if (LONG_INLINE.has(a)) return true;
     if (/^-[^-]/.test(a) && [...letters].some((l) => a.slice(1).includes(l))) return true;
   }
   return false;
+}
+
+/**
+ * Which argument is the script the interpreter will run? Only the FIRST positional
+ * argument can be. Everything after it is the script's own data, and the agent must not
+ * read data as if it were code: `python3 -m json.tool incidents.jsonl` and
+ * `python3 - notes.txt` run no file at all, and `python3 report.py attack-writeup.md`
+ * runs report.py, not the write-up. Returns the token, or null when there is no script
+ * file (module run, stdin, or no positional).
+ */
+export function scriptToken(exe, args) {
+  const fam = interpreterOf(exe);
+  if (!fam) return null;
+  const valued = new Set(VALUE_OPTS[fam]);
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "-") return null; // the program comes from stdin
+    if (a === "--") return args[i + 1] ?? null;
+    if (fam === "php" && a === "-f") return args[i + 1] ?? null;
+    const isOpt = a.startsWith("-") || (fam === "shell" && a.startsWith("+"));
+    if (!isOpt) return a;
+    if (fam === "python" && /^-[A-Za-z]*m$/.test(a)) return null; // -m <module>: no script file
+    if (valued.has(a) || (/^-[A-Za-z]{2,}$/.test(a) && valued.has("-" + a.slice(-1)))) i++; // skip the option's value
+  }
+  return null;
 }
 
 /**
@@ -166,16 +241,15 @@ export function extractPayload(f) {
   // (`python3 foo.py`). Skip inline-code forms — the code is already in the cmdline,
   // and a token that merely MENTIONS another script's path (e.g. a shell command
   // referencing it) must not cause us to slurp+score that unrelated file.
-  if (exe in INTERPRETERS && !hasInlineCode(exe, args.slice(1))) {
-    for (const tok of args.slice(1)) {
-      if (tok.startsWith("-")) continue;
-      const path = resolveScript(tok, { cwd: f["proc.cwd"], pid: Number(f["proc.pid"]) || 0 });
-      const text = path && readScript(path);
-      if (text !== null && text !== undefined) {
-        pieces.push(text);
-        break;
-      }
-    }
+  // And read ONLY the script: the first positional argument. Later arguments are data.
+  // (Scanning for "the first argument that is a file" once made the agent read its own
+  // incident log, which quotes attackers, and convict whoever was reading it.)
+  if (interpreterOf(exe) && !hasInlineCode(exe, args.slice(1))) {
+    const tok = scriptToken(exe, args.slice(1));
+    const path = tok && resolveScript(tok, { cwd: f["proc.cwd"], pid: Number(f["proc.pid"]) || 0 });
+    // Never our own incident log, however it is invoked: it is evidence, not code.
+    const text = path && resolvePath(path) !== resolvePath(INCIDENT_LOG) ? readScript(path) : null;
+    if (text !== null && text !== undefined) pieces.push(text);
   }
   return pieces.join("\n").slice(0, MAX_PAYLOAD);
 }
@@ -247,7 +321,7 @@ function respond(f, d, payload) {
   const guard = d.decision === "block" ? isProtected(p.pid, p.exe) : null;
   const action =
     d.decision === "alert" ? "ALERT (tier-2 unavailable — no kill)"
-    : MONITOR ? "DETECTED (monitor — no kill)"
+    : !deps.mode.enforce ? "DETECTED (monitor — no kill)"
     : guard ? `SPARED (${guard})`
     : "KILL";
   log(`SENTINEL ${action}  tier-${d.tier}  pid=${p.pid} ppid=${p.ppid} sid=${p.sid} user=${p.user} exe=${p.exe}${decoded}${sess}  score=${d.score.toFixed(2)}${how ? " " + how : ""}`);
@@ -257,7 +331,7 @@ function respond(f, d, payload) {
 
   const base = {
     host: HOST, ts: now(), decision: d.decision, tier: d.tier,
-    action: d.decision === "alert" ? "alerted" : MONITOR ? "monitored" : guard ? `spared:${guard}` : "killed",
+    action: d.decision === "alert" ? "alerted" : !deps.mode.enforce ? "monitored" : guard ? `spared:${guard}` : "killed",
     ...p, score: d.score, signals: d.signals, reason: d.reason,
     conf: d.adjudication?.confidence ?? null, reasoning: d.adjudication?.reasoning ?? null,
     // When the session convicted, the evidence is the session's words, not this one exec's.
@@ -269,9 +343,74 @@ function respond(f, d, payload) {
   reportToCloud(base);
 
   let killed = [];
-  if (ENFORCE && d.decision === "block" && !guard) killed = killTree(p.pid);
+  if (deps.mode.enforce && d.decision === "block" && !guard) killed = deps.killTree(p.pid);
 
-  writeIncident({ ...base, tier2: d.adjudication || null, killed });
+  // Session kill: only on a conviction, only when armed twice (--enforce --kill-session).
+  // It runs even when the offending process itself was spared (a protected interpreter can
+  // still be the door an agent is walking through); each member faces the same guard.
+  let sessionKill = null;
+  if (deps.mode.enforce && deps.mode.killSession && d.decision === "block") {
+    sessionKill = killSession(p.sid, new Set(killed));
+    if (sessionKill.why) log(`            session ${p.sid}: not killed (${sessionKill.why})`);
+    else {
+      log(`            SESSION KILL sid=${p.sid}: killed ${sessionKill.killed.length} more process(es)${sessionKill.spared.length ? `, spared ${sessionKill.spared.map((x) => `${x.pid}(${x.why})`).join(" ")}` : ""}; quarantined for ${Math.round(QUARANTINE_MS / 1000)}s`);
+      killed = [...killed, ...sessionKill.killed];
+    }
+  }
+
+  writeIncident({ ...base, tier2: d.adjudication || null, killed, session_kill: sessionKill });
+}
+
+// ── session kill + quarantine ────────────────────────────────────────────────
+// The sessions the agent itself lives in: its own, and those of its ancestors (the shell
+// or service manager that started it). Ending one of those would be the agent cutting
+// off its own operator, so a session kill never touches them. Under systemd this is just
+// the agent's own session; started by hand it is also the terminal it was started from.
+const OWN_SIDS = new Set([...selfAncestors].map(procSid).filter((n) => n !== null));
+const quarantined = new Map(); // sid -> { until, since, count }
+
+/** Kill every process in session `sid` that the guard allows, then quarantine the sid. */
+function killSession(sid, already) {
+  const out = { sid, killed: [], spared: [], why: null };
+  if (!(Number.isInteger(sid) && sid > 1)) return { ...out, why: "no session id" };
+  if (deps.ownSids.has(sid)) return { ...out, why: "the session the agent runs in or was started from" };
+  for (const pid of deps.sessionPids(sid)) {
+    if (already.has(pid)) continue;
+    const guard = isProtected(pid, deps.procName(pid));
+    if (guard) { out.spared.push({ pid, why: guard }); continue; }
+    try { deps.killPid(pid); out.killed.push(pid); } catch {}
+  }
+  if (QUARANTINE_MS > 0) {
+    quarantined.set(sid, { until: deps.now() + QUARANTINE_MS, since: now(), count: 0 });
+    while (quarantined.size > 500) quarantined.delete(quarantined.keys().next().value);
+  }
+  return out;
+}
+
+// An exec inside a quarantined session is stopped without being scored: the session was
+// convicted, and a silent command from it is the attacker's next step, not evidence to
+// weigh. The protected-process guard still applies. Returns true when it handled the event.
+function quarantine(f) {
+  if (!deps.mode.enforce || !deps.mode.killSession) return false;
+  const sid = Number(f["proc.sid"]);
+  const q = quarantined.get(sid);
+  if (!q) return false;
+  if (deps.now() >= q.until) { quarantined.delete(sid); return false; }
+  const p = procFields(f);
+  const guard = isProtected(p.pid, p.exe);
+  q.count++;
+  log(`SENTINEL ${guard ? `SPARED (${guard})` : "KILL"}  quarantined-session  pid=${p.pid} ppid=${p.ppid} sid=${p.sid} user=${p.user} exe=${p.exe}`);
+  log(`            cmd: ${(p.cmdline || "").slice(0, 200)}`);
+  const incident = {
+    host: HOST, ts: now(), decision: "block", tier: null,
+    action: guard ? `spared:${guard}` : "killed", ...p, score: null, signals: [],
+    reason: `exec in a session convicted at ${q.since}; quarantined until ${new Date(q.until).toISOString()}`,
+    conf: null, reasoning: null, narration: "", via_session: false, session: null, quarantine: { sid, since: q.since, count: q.count },
+  };
+  if (q.count === 1) reportToCloud(incident); // one off-box report per quarantined session, not one per exec
+  const killed = guard ? [] : deps.killTree(p.pid);
+  writeIncident({ ...incident, tier2: null, killed, session_kill: null });
+  return true;
 }
 
 // A detector exception must never become a silent allow. It is logged, written as an
@@ -300,12 +439,23 @@ export const sessionKeyOf = (f) => {
 };
 
 // Injectable seams for tests (swap `deps.decide` to simulate a throwing detector).
-export const deps = { decide: (payload, sessionKey) => decideSession(sessionKey, payload) };
+// `mode` is what the process was started with; the kill primitives are real /proc + SIGKILL.
+export const deps = {
+  decide: (payload, sessionKey) => decideSession(sessionKey, payload),
+  mode: { enforce: ENFORCE, killSession: ENFORCE && KILL_SESSION },
+  killTree,
+  sessionPids,
+  procName: (pid) => procStatus(pid)?.name ?? "",
+  killPid: (pid) => process.kill(pid, "SIGKILL"),
+  ownSids: OWN_SIDS,
+  now: () => Date.now(),
+};
 
 // ── event handling ───────────────────────────────────────────────────────────
 export async function handleEvent(f) {
   const pid = Number(f["proc.pid"]);
   if (!pid || pid === OWN_PID) return;
+  if (quarantine(f)) return; // a convicted session's next exec: stopped, not scored
   const payload = extractPayload(f);
   if (payload.trim().length < 3) return;
 
@@ -344,6 +494,7 @@ async function selftest() {
 function main() {
   log(`Aris Sentinel agent starting`);
   log(`  mode: ${ENFORCE ? "ENFORCE (kills the attack on detection)" : "MONITOR (detect + alert only — no kill; pass --enforce to arm)"}`);
+  log(`  session kill: ${ENFORCE && KILL_SESSION ? `ON (a conviction ends the offender's whole session and quarantines it for ${Math.round(QUARANTINE_MS / 1000)}s)` : KILL_SESSION ? "IGNORED (--kill-session does nothing without --enforce)" : "off (pass --kill-session with --enforce)"}`);
   log(`  tier 2: ${hasTier2() ? `ENABLED (${providers().map((p) => p.name).join(" -> ")})` : "disabled (tier-1 only; set ANTHROPIC_API_KEY, or OPENAI_BASE_URL+OPENAI_MODEL for a local judge) — escalate band -> alert"}`);
   for (const w of providerWarnings()) log(`  WARN ${w}`);
   log(`  fail mode: ${process.env.ARIS_FAIL_MODE === "alert" ? "alert (tier-2 errors page, never block)" : "closed (tier-2 errors block as suspicious)"}`);

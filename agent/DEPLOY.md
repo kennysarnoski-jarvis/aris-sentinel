@@ -51,7 +51,8 @@ sudo systemd-run --unit=aris-agent --working-directory=/home/ubuntu \
 ```
 Modes — **safe by default**: with no flag the agent runs **MONITOR** (detect + alert,
 never kills). Add `--enforce` to let it kill on detection — do that only once you trust
-it on that box. Sanity-check with no root/Falco: `node sentinel-agent.mjs --selftest`.
+it on that box. `--enforce --kill-session` additionally ends the offender's whole session
+(see Known limits before arming it). Sanity-check with no root/Falco: `node sentinel-agent.mjs --selftest`.
 
 Logs: `journalctl -u aris-agent -f`. Incidents: `/var/log/aris-incidents.jsonl`, one JSON
 row each with `decision` ∈ `block` / `alert` / `error` and `action` ∈ `killed` /
@@ -84,7 +85,7 @@ is not fooled by keyword salad — an obvious demo stub is adjudged *not-agentic
 payload must read as a genuine autonomous agent.
 
 ## Stealth / de-branding (install.sh)
-`sudo ./install.sh [name] [--enforce]` deploys under a GENERIC identity so on-box recon
+`sudo ./install.sh [name] [--enforce [--kill-session]]` deploys under a GENERIC identity so on-box recon
 reveals no security tool — an autonomous attacker not trained to recognize Aris sees a
 boring `sys-telemetryd` daemon it can't confidently kill (and killing it is a tamper
 event the dead-man's switch catches). **Installs in MONITOR mode by default** (detect +
@@ -135,8 +136,29 @@ The agent never kills pid ≤ 1, its own ancestors, or a protected comm allowlis
   that path carry `via_session: true` and a `session` summary, and the log line says
   `via-session(N payloads)`. Without a judge a session is one alert, never a kill. Processes
   that share a sid share a window: the children of one exploited server are one session.
-- **Kill granularity**: kills the offending process tree, not the whole attacker session.
-  A convicted session's later narration-bearing execs are blocked; its silent ones (`ls`)
-  are not touched. A `--kill-session` mode (terminate the sid) is the next increment.
+- **Kill granularity**: `--enforce` kills the offending process tree. That leaves an
+  agent's driver (the shell, or the exploited server issuing the commands) alive to send
+  the next one. `--enforce --kill-session` is the second, separate opt-in:
+  - on a conviction, every process whose session id matches the offender's is killed,
+    each under the same guard as a single kill (never pid ≤ 1, the agent or its ancestors,
+    or a protected comm such as sshd, systemd, cron, containerd);
+  - the session id is quarantined for 10 minutes (`ARIS_SESSION_QUARANTINE_MS`, `0` = no
+    quarantine): any exec in it is killed without being scored, so a silent follow-up
+    dies too. One off-box report per quarantined session; every exec is in the local log;
+  - it never fires on an `alert`, in monitor mode, on the agent's own session, or when the
+    session id is unknown. Incidents carry `session_kill: {sid, killed, spared}`.
+  **Read this before arming it:** processes that share a session id share its fate. If an
+  agent came in through a server, that server's whole session, the server included, is
+  what gets ended. A false positive costs a session, not a process. Run `--enforce` alone
+  first. The session the agent itself runs in, or was started from, is never ended or
+  quarantined. Validated live in the demo VM: `docs/demo-kill/validate-session-kill.sh`,
+  23/23 checks on kernel 6.8 / Falco 0.45 (2026-11-10).
+- **Which file is "the script"**: for an interpreter exec the agent reads only the first
+  positional argument, resolved against the process's cwd. `python3 -m <module>`, a bare
+  `-` (stdin), and anything after the script are not read; an option's value
+  (`-W ignore`, `-o pipefail`, `--require ./hook.js`) is skipped. The agent never reads
+  its own incident log as a script. Before 2026-11-10 it scanned for the first argument
+  that was a file, which made `python3 -m json.tool <incident log>` look like the
+  attack the log was quoting. If you ran `--enforce` on an earlier build, update.
 - **Detect vs enforce**: Falco observes post-syscall; the "stop before destruction"
   guarantee rests on the thesis that narration appears phases before impact.

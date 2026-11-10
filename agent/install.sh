@@ -12,18 +12,23 @@
 # OPENAI_*, KIMI_API_KEY, ARIS_TIER2_*, ARIS_CLOUD_URL, ARIS_INGEST_KEY), so re-installing over the demo setup is seamless.
 set -euo pipefail
 
-# Args (any order): [disguise-name]  and optional --enforce.
+# Args (any order): [disguise-name]  and optional --enforce [--kill-session].
 # Default is MONITOR mode (detect + alert, no kill) — safe for a first pilot. Add
-# --enforce only once you trust it on the target box.
+# --enforce only once you trust it on the target box. --kill-session (with --enforce) also
+# ends the offender's whole session and quarantines it; it does nothing on its own.
 NAME="sys-telemetryd"
-EXECFLAGS=""
+ENFORCE_FLAG=""
+SESSION_FLAG=""
 for a in "$@"; do
   case "$a" in
-    --enforce) EXECFLAGS=" --enforce" ;;
+    --enforce) ENFORCE_FLAG=" --enforce" ;;
+    --kill-session) SESSION_FLAG=" --kill-session" ;;
     -*) ;;
     *) NAME="$a" ;;
   esac
 done
+if [ -n "$SESSION_FLAG" ] && [ -z "$ENFORCE_FLAG" ]; then echo "--kill-session needs --enforce; ignoring it (staying in MONITOR mode)"; SESSION_FLAG=""; fi
+EXECFLAGS="$ENFORCE_FLAG$SESSION_FLAG"
 SRC="$(cd "$(dirname "$0")" && pwd)"
 LIB="/usr/local/lib/$NAME"
 ENVF="/etc/$NAME.env"
@@ -82,7 +87,7 @@ systemctl enable "$NAME.service" >/dev/null 2>&1 || true
 systemctl restart "$NAME.service"
 
 echo "installed as '$NAME'"
-echo "  mode    : ${EXECFLAGS:+ENFORCE (kills on detection)}${EXECFLAGS:-MONITOR (detect + alert, no kill — re-run with --enforce to arm)}"
+echo "  mode    : ${ENFORCE_FLAG:+ENFORCE (kills on detection)${SESSION_FLAG:+ + SESSION KILL (ends the whole offending session and quarantines it)}}${ENFORCE_FLAG:-MONITOR (detect + alert, no kill — re-run with --enforce to arm)}"
 echo "  service : systemctl status $NAME"
 echo "  files   : $LIB   env: $ENVF"
 echo "  ps/top  : shows '$NAME' (not node/sentinel);  falco -> ${NAME}-probe"

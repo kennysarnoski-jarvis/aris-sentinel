@@ -82,7 +82,7 @@ Run the evidence:
 bun run test:all
 ```
 
-That scores the 94-file labeled corpus, replays the Windows event stream and eleven recorded sessions, checks the two-tier routing, and runs 234 unit tests. Takes a few seconds.
+That scores the 94-file labeled corpus, replays the Windows event stream and eleven recorded sessions, checks the two-tier routing, and runs 255 unit tests. Takes a few seconds.
 
 ## How it decides
 
@@ -114,7 +114,7 @@ Tier 2 has a governor: verdicts are cached by payload hash, identical in-flight 
 
 | decision | what the agent does |
 |---|---|
-| **block** | convicted. Monitor mode: log and report. `--enforce`: kill the process tree. |
+| **block** | convicted. Monitor mode: log and report. `--enforce`: kill the process tree. `--enforce --kill-session` (Linux): also end every process in the offender's session and quarantine that session for ten minutes. |
 | **alert** | suspicious, but no judge could rule (none configured, or budget spent). Logged and reported, **never killed**. |
 | **allow** | clear at tier 1, or a judge said not-agentic. |
 | **error** | the detector threw. Logged and reported as an incident, never silently dropped. Nothing killed. |
@@ -169,7 +169,7 @@ The matrix also showed *why the prompt matters*: with the original prompt the 14
 
 ![The kill: on an Ubuntu VM with Falco, a narrated attacker is launched, the agent SIGKILLs it at exec with score 0.78, the destructive step never runs, and a benign job on the same box completes](docs/demo-kill.gif)
 
-Reproduce that in about ten minutes with a throwaway VM: [docs/demo-kill/README.md](docs/demo-kill/README.md).
+Reproduce that in about ten minutes with a throwaway VM: [docs/demo-kill/README.md](docs/demo-kill/README.md). The same VM runs the live validation of session evidence and session kill.
 
 - **Linux.** [Falco](https://falco.org) taps every exec via eBPF; the agent scores the command line plus, for interpreters, the script file (resolved against the process's own cwd). Protected-process allowlist, per-session dedup, de-branded install so on-box recon sees a boring telemetry daemon. Verified live on Ubuntu 24.04, and recorded above: a narrated attacker SIGKILLed at exec, its destructive step never ran, a benign job untouched. [agent/DEPLOY.md](agent/DEPLOY.md).
 - **Windows.** PowerShell Script Block Logging (Event ID 4104) hands the agent the already-deobfuscated script text. Same detector, `taskkill` instead of SIGKILL. Verified live on Windows Server 2022. [agent/win/WINDOWS.md](agent/win/WINDOWS.md).
@@ -198,6 +198,7 @@ A hosted model's safety classifier screens request *content*, not purpose. Ask i
 | `ARIS_CLOUD_URL` + `ARIS_INGEST_KEY` | — | off-box incident reports |
 | `ARIS_INCIDENTS` | `/var/log/aris-incidents.jsonl` | local incident log |
 | `ARIS_SESSION_TTL_MS` / `ARIS_SESSION_MAX_ITEMS` | `600000` / `12` | session evidence: how long a narration-bearing payload stays in its session's window, and how many are kept. TTL `0` turns it off |
+| `ARIS_SESSION_QUARANTINE_MS` | `600000` | with `--kill-session`: how long a convicted session stays quarantined. `0` = kill what is alive, no quarantine |
 | `ARIS_VERBOSE=1` | — | log every allow too |
 
 ## Layout
@@ -212,7 +213,7 @@ A hosted model's safety classifier screens request *content*, not purpose. Ask i
 | command | what it proves | key |
 |---|---|---|
 | `bun run test` | tier-1 on the Linux corpus: precision 1.00, tier-1 recall 0.61, pipeline-reachable recall 1.00, 0 false positives; the decode stage defeats base64 and exec-wrapping | no |
-| `bun test` | 234 unit tests: session evidence (window, reuse, no tier-1 conviction), verdict validation, timeouts, provider order on both wires, fallback gating, refusal stops, governor, policy, cwd resolution, inline-flag detection, alert and error incidents, the CLI, corpus snapshot, single-source guard | no |
+| `bun test` | 255 unit tests: session evidence (window, reuse, no tier-1 conviction), session kill and quarantine (stubbed kill primitives), verdict validation, timeouts, provider order on both wires, fallback gating, refusal stops, governor, policy, cwd resolution, inline-flag detection, alert and error incidents, the CLI, corpus snapshot, single-source guard | no |
 | `bun run windows` | 10/10 narrated PowerShell caught, benign and encoded cradles clear | no |
 | `bun run pipeline:stub` | only the escalate band reaches tier 2 | no |
 | `bun run sessions:stub` | 11/11: thin agentic sessions reach the judge as a transcript, quiet benign sessions never do | no |
@@ -231,7 +232,7 @@ A hosted model's safety classifier screens request *content*, not purpose. Ask i
 
 ## Status
 
-Working, tested, run on a handful of pilot hosts, not yet battle-hardened. Not built yet: sink scoping for busy hosts, session-level kill (today a convicted session's silent commands are not touched, only its narration-bearing ones), behavioral signals that do not depend on text, more sinks (file writes, HTTP bodies), a native Windows installer. Contributions that add corpus samples are the most valuable kind; see the rules in [corpus/README.md](corpus/README.md).
+Working, tested, run on a handful of pilot hosts, not yet battle-hardened. Session-level kill (`--kill-session`) is implemented and validated live in the demo VM (23/23 checks on kernel 6.8 with Falco 0.45; `docs/demo-kill/validate-session-kill.sh`). It is a second opt-in on top of `--enforce`; read the warning in the deploy guide before arming it. Not built yet: sink scoping for busy hosts, behavioral signals that do not depend on text, more sinks (file writes, HTTP bodies), a native Windows installer. Contributions that add corpus samples are the most valuable kind; see the rules in [corpus/README.md](corpus/README.md).
 
 ## License
 

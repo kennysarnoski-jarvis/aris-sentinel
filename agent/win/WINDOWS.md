@@ -50,6 +50,9 @@ tree; a protected-name allowlist prevents touching lsass/csrss/winlogon/etc. `al
 (tier 2 unavailable) and `error` (detector threw) incidents are logged + reported and
 never kill.
 
+On Windows a PowerShell process *is* the session, so `--enforce` (`taskkill /T /F` on that
+process) already ends it; there is no separate `--kill-session` and no quarantine here.
+
 ## Known gaps / next
 
 - **Live validation** of the event-log read + kill on a real Windows host.

@@ -49,6 +49,29 @@ vhs docs/demo-kill.tape
 The tape drives the VM from the host through `limactl shell`, so the recording is the
 real thing, not a replay.
 
+## Live validation of session evidence and session kill
+
+The same VM runs an end-to-end check of the session features against real processes and
+the session ids Falco reports. It arms the agent with `--enforce --kill-session` and no
+judge, and needs nothing but the mounted repo:
+
+```bash
+limactl shell aris-demo -- sudo bash /Volumes/ArisLLM/Projects-Archive/aris-sentinel/docs/demo-kill/validate-session-kill.sh
+```
+
+Six scenarios, 23 checks, about 75 seconds: a session kill (tree, driving shell and a
+helper), quarantine of a convicted session with a protected survivor, an unrelated
+control, a session alert from thin narration across three execs (which must kill
+nothing), reading the incident log with an interpreter (which must not be an attack), and
+a conviction inside the agent's own launch session (process killed, session spared).
+Exit code 0 means every check passed. 2 CPUs and 4 GB are enough:
+`limactl start --cpus 2 --memory 4 …`.
+
+The first run of this script, on 2026-11-10, failed 8 of 17 checks and found two real
+bugs: the agent read its own incident log as a script and convicted the reader, and the
+session kill that followed quarantined the operator's own terminal. Both are fixed and
+both are now scenarios here.
+
 ## 5. Tear down
 
 ```bash

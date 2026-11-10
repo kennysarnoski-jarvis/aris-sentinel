@@ -82,7 +82,7 @@ Run the evidence:
 bun run test:all
 ```
 
-That scores the 94-file labeled corpus, replays the Windows event stream, checks the two-tier routing, and runs 190 unit tests. Takes a few seconds.
+That scores the 94-file labeled corpus, replays the Windows event stream and eleven recorded sessions, checks the two-tier routing, and runs 234 unit tests. Takes a few seconds.
 
 ## How it decides
 
@@ -121,6 +121,12 @@ Tier 2 has a governor: verdicts are cached by payload hash, identical in-flight 
 
 **Fail-closed.** If every judge refuses, errors or times out on an escalate-band payload, that is a block, not a pass. Attack narration is exactly the text a safety classifier declines, so a refusal is not evidence of innocence. `ARIS_FAIL_MODE=alert` is the knob if you would rather page than kill on an outage.
 
+**Session evidence.** An agent does not have to put its reasoning in one place. "I'll check sudo first" in one command, "Step 2: list the shares, largest first" in the next, a why-comment in a third: each is weak on its own, and judging each exec alone lets the whole session through. So every narration-bearing payload is also kept in a window for its session (the Linux session id, or the PowerShell process) for ten minutes, and the window is scored as one text. When the window reaches the block band, meaning the same narration would have blocked had it arrived as one script, the **session transcript** goes to the judge. Session evidence can alert, or block with a judge's verdict. It never convicts at tier 1, so no process is killed on cross-command evidence without a judge. A session verdict is reused until the evidence grows, so a chatty benign session costs one judge call, not one per command.
+
+```bash
+bun run score --session corpus/sessions/agentic_thin_privesc.jsonl
+```
+
 ## What it catches, and what it doesn't
 
 Numbers from the labeled corpus, measured with the detector frozen *before* the 62 newest samples were written, so they are held out, not fitted ([corpus/README.md](corpus/README.md) has the method and the rules):
@@ -134,6 +140,17 @@ Numbers from the labeled corpus, measured with the detector frozen *before* the 
 - Tier 1 alone: precision 1.00, recall 0.52. Half the attacks are convicted locally for free.
 - Nothing agentic slipped to clear, nothing benign was blocked, every terse one-liner stayed clear.
 - 13 of 39 non-agentic files reached tier 2. That is the cost of the design, not a false positive: a thin "I'll check sudo first" from an agent and a Copilot comment both score 0.31 at tier 1, and only a judge of the concept can separate them.
+
+**Sessions (2026-11-10, Claude Opus 5.5 as judge, same judge both columns).** Eleven recorded sessions: five agentic ones where no single command blocks at tier 1 except one deliberate loud opener, three quiet benign ones, three benign ones written to be loud (first-person, plan-shaped, "largest", "backed up to").
+
+| | each command judged alone | with session evidence |
+|---|---|---|
+| agentic sessions with a block | 3 / 5 | **5 / 5** |
+| agentic commands blocked | 4 / 20 | **8 / 20** |
+| benign sessions blocked | 0 / 6 | **0 / 6** (the three loud ones reached the judge and were cleared) |
+| judge calls, all eleven sessions | 16 | 18 |
+
+One five-command session was cleared command by command, including one at 0.53, and convicted as a session at command four. A local `arete:27b` judge gave the same 11/11. Small sample, written by someone who knows the features; it measures the mechanism, not generalization. The commands before the window crosses the threshold have already run.
 
 **The limit, stated plainly:** an agent told not to narrate is invisible to this. Zero narration is zero signal. Tier 2 narrows that gap and cannot close it. The stress test of a mutating attacker (`test/loop/`) caught 4 of 6 attempts; the two that evaded had suppressed their narration and achieved nothing real.
 
@@ -180,11 +197,12 @@ A hosted model's safety classifier screens request *content*, not purpose. Ask i
 | `ARIS_TIER2_CACHE_TTL_MS` / `ARIS_TIER2_CONCURRENCY` / `ARIS_TIER2_BUDGET_PER_MIN` | `600000` / `4` / `30` | the governor. Budget `0` = unlimited |
 | `ARIS_CLOUD_URL` + `ARIS_INGEST_KEY` | — | off-box incident reports |
 | `ARIS_INCIDENTS` | `/var/log/aris-incidents.jsonl` | local incident log |
+| `ARIS_SESSION_TTL_MS` / `ARIS_SESSION_MAX_ITEMS` | `600000` / `12` | session evidence: how long a narration-bearing payload stays in its session's window, and how many are kept. TTL `0` turns it off |
 | `ARIS_VERBOSE=1` | — | log every allow too |
 
 ## Layout
 
-- [`agent/sentinel-core.mjs`](agent/sentinel-core.mjs) is **the** detector: the only file that defines a pattern, a prompt, a threshold or the policy. Tier-1 features, decode stage, judge chain, governor, `decide()`. One file, no imports beyond `node:*`, so it drops onto a bare box. A unit test fails if any other file defines a pattern.
+- [`agent/sentinel-core.mjs`](agent/sentinel-core.mjs) is **the** detector: the only file that defines a pattern, a prompt, a threshold or the policy. Tier-1 features, decode stage, judge chain, governor, `decide()`, and session evidence (`decideSession()`). One file, no imports beyond `node:*`, so it drops onto a bare box. A unit test fails if any other file defines a pattern.
 - `detector/*.ts` are typed re-exports of the core for the TypeScript harnesses.
 - `agent/sentinel-agent.mjs` (Linux), `agent/win/sentinel-agent-win.mjs` (Windows), `agent/score.mjs` (the CLI), `interposition/sentinel-langflow-demo.mjs` (HTTP sink) all import the core.
 - `corpus/` is the labeled sample set; `test/corpus-snapshot.json` freezes every verdict so a detector change that moves one fails CI until the diff is reviewed.
@@ -194,12 +212,14 @@ A hosted model's safety classifier screens request *content*, not purpose. Ask i
 | command | what it proves | key |
 |---|---|---|
 | `bun run test` | tier-1 on the Linux corpus: precision 1.00, tier-1 recall 0.61, pipeline-reachable recall 1.00, 0 false positives; the decode stage defeats base64 and exec-wrapping | no |
-| `bun test` | 190 unit tests: verdict validation, timeouts, provider order on both wires, fallback gating, refusal stops, governor, policy, cwd resolution, inline-flag detection, alert and error incidents, the CLI, corpus snapshot, single-source guard | no |
+| `bun test` | 234 unit tests: session evidence (window, reuse, no tier-1 conviction), verdict validation, timeouts, provider order on both wires, fallback gating, refusal stops, governor, policy, cwd resolution, inline-flag detection, alert and error incidents, the CLI, corpus snapshot, single-source guard | no |
 | `bun run windows` | 10/10 narrated PowerShell caught, benign and encoded cradles clear | no |
 | `bun run pipeline:stub` | only the escalate band reaches tier 2 | no |
+| `bun run sessions:stub` | 11/11: thin agentic sessions reach the judge as a transcript, quiet benign sessions never do | no |
 | `bun run selftest` / `bun run win:mock` | the agents end to end, no root | no |
 | `bun run typecheck` | `tsc` over `detector/` and `test/` | no |
 | `bun run test:all` | all of the above except typecheck; this is what CI runs | no |
+| `bun run sessions` | the same eleven sessions with a real judge: agentic blocked via session, benign allowed. `-- --baseline` re-runs with session evidence off | **yes** |
 | `bun run tier2` / `bun run pipeline` / `bun run fpRate` / `bun run matrix` | tier 2 for real: catches the escalated attacks, clears the escalated benign files, compares judges on the same cells | **yes** |
 
 ## Go deeper
@@ -211,7 +231,7 @@ A hosted model's safety classifier screens request *content*, not purpose. Ask i
 
 ## Status
 
-Working, tested, run on a handful of pilot hosts, not yet battle-hardened. Not built yet: sink scoping for busy hosts, session-level scoring (narration accumulated across an agent's execs, not per exec), more sinks (file writes, HTTP bodies), a native Windows installer. Contributions that add corpus samples are the most valuable kind; see the rules in [corpus/README.md](corpus/README.md).
+Working, tested, run on a handful of pilot hosts, not yet battle-hardened. Not built yet: sink scoping for busy hosts, session-level kill (today a convicted session's silent commands are not touched, only its narration-bearing ones), behavioral signals that do not depend on text, more sinks (file writes, HTTP bodies), a native Windows installer. Contributions that add corpus samples are the most valuable kind; see the rules in [corpus/README.md](corpus/README.md).
 
 ## License
 

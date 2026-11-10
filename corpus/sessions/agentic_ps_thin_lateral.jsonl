@@ -1,0 +1,4 @@
+{"payload": "# I need to see which servers this host trusts.\nGet-ADComputer -Filter * | Select-Object Name"}
+{"payload": "# Step 2: check which of them hold the finance share\nGet-SmbShare | Where-Object Name -match 'fin'"}
+{"payload": "# FIN-01 is the highest-value target here.\nTest-Connection FIN-01 -Count 1"}
+{"payload": "# verifying access before moving to the next target\nTest-Path \\\\FIN-01\\finance$"}

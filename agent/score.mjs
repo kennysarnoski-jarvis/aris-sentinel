@@ -6,16 +6,22 @@
 //   cat something.sh | node agent/score.mjs                # stdin
 //   node agent/score.mjs --json file                       # machine-readable
 //   node agent/score.mjs --decide file                     # run tier 2 too (needs a judge)
+//   node agent/score.mjs --session a.sh b.sh c.sh          # the files are ONE session, in order
+//   node agent/score.mjs --session corpus/sessions/x.jsonl # …or a JSONL of {"payload": "..."}
 //
 // Prints the tier-1 verdict, score, the signals that fired and the evidence snippet
 // for each one — the same explanation an incident carries. With --decide it runs the
 // full decide() policy (block / alert / allow) through whatever judges are configured.
 //
+// With --session each input is still scored alone, then the session window is scored: thin
+// narration spread across the inputs is reported when it reaches the block band together
+// (that is what sends a session to the judge). Add --decide to run the judge on it.
+//
 // Exit code: 0 = clear/allow, 1 = escalate/alert, 2 = block. Usable as a gate.
 
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { inspect, decide, hasTier2, providers } from "./sentinel-core.mjs";
+import { inspect, decide, decideSession, createSessionTracker, bearsNarration, narrationScore, hasTier2, providers, SESSION_THRESHOLD } from "./sentinel-core.mjs";
 
 const RANK = { clear: 0, allow: 0, escalate: 1, alert: 1, block: 2 };
 
@@ -45,10 +51,49 @@ export function format(name, e) {
   return lines.join("\n");
 }
 
+// A session input list: plain files are one exec each; a .jsonl file is one exec per line.
+function sessionInputs(files) {
+  return files.flatMap((f) =>
+    f.endsWith(".jsonl")
+      ? readFileSync(f, "utf8").split("\n").filter(Boolean).map((l, i) => [`${f}#${i + 1}`, String(JSON.parse(l).payload ?? "")])
+      : [[f, readFileSync(f, "utf8")]],
+  );
+}
+
+async function sessionMain(files, { json, full }) {
+  const sessions = createSessionTracker({ ttlMs: 3_600_000, maxItems: 64 });
+  const steps = [];
+  let win = null, worst = 0, reachedAt = null;
+  for (const [name, text] of sessionInputs(files)) {
+    const d = full ? await decideSession("cli", text, { sessions }) : null;
+    const e = explain(text, d && !d.viaSession ? { decideResult: d } : {});
+    if (!full && bearsNarration(inspect(text).scoredLayer)) win = sessions.observe("cli", inspect(text).scoredLayer);
+    const ws = !full && win && win.size >= 2 ? narrationScore(win.text) : null;
+    const via = d?.viaSession ? { decision: d.decision, tier: d.tier, reason: d.reason, size: d.session.size, score: Number(d.session.score.toFixed(2)), signals: d.signals, judge: d.adjudication ?? null }
+      : ws && ws.score >= SESSION_THRESHOLD && e.verdict !== "block" ? { size: win.size, score: Number(ws.score.toFixed(2)), signals: ws.signals } : null;
+    if (via && reachedAt === null) reachedAt = steps.length + 1;
+    worst = Math.max(worst, RANK[via?.decision ?? e.decision ?? e.verdict] ?? 0, via && !via.decision ? 1 : 0);
+    steps.push({ file: name, ...e, session: via });
+    if (!json) {
+      console.log(format(name, e));
+      if (via) console.log(`  >> SESSION: ${via.size} payloads together score ${via.score.toFixed(2)} [${via.signals.join(", ")}]` + (via.decision ? ` -> ${via.decision.toUpperCase()}  ${via.reason}${via.judge?.reasoning ? `\n     judge: ${via.judge.reasoning}` : ""}` : ` -> reaches the judge (>= ${SESSION_THRESHOLD.toFixed(2)})`));
+      console.log();
+    }
+  }
+  if (json) console.log(JSON.stringify({ session: true, reachedJudgeAtStep: reachedAt, steps }, null, 2));
+  else console.log(reachedAt ? `session: evidence reached the judge at step ${reachedAt} of ${steps.length}` : `session: ${steps.length} steps, never reached the session threshold (${SESSION_THRESHOLD.toFixed(2)})`);
+  process.exitCode = worst;
+}
+
 async function main(argv) {
   const json = argv.includes("--json");
   const full = argv.includes("--decide");
   const files = argv.filter((a) => !a.startsWith("--"));
+  if (argv.includes("--session")) {
+    if (!files.length) { console.error("--session needs files (or a .jsonl of {\"payload\": ...} lines)"); process.exitCode = 64; return; }
+    if (full && !hasTier2()) console.error("note: --decide with no judge configured; a session that reaches the threshold will be ALERT");
+    return sessionMain(files, { json, full });
+  }
   const inputs = files.length ? files.map((f) => [f, readFileSync(f, "utf8")]) : [["<stdin>", readFileSync(0, "utf8")]];
   if (full && !hasTier2()) console.error("note: --decide with no judge configured; escalate-band inputs will be ALERT (set ANTHROPIC_API_KEY or OPENAI_BASE_URL+OPENAI_MODEL)");
   else if (full) console.error(`judges: ${providers().map((p) => `${p.name}:${p.model}`).join(" -> ")}`);

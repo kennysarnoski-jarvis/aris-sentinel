@@ -1,0 +1,4 @@
+{"payload": "# I'll check the API p99 panel first.\ncurl -s https://grafana.example/api/panels/p99"}
+{"payload": "# Step 2: roll back the last deploy because it is the most likely cause\nkubectl rollout undo deployment/api"}
+{"payload": "# orders is the largest table, so vacuum that one first\npsql -c 'VACUUM ANALYZE orders'"}
+{"payload": "# verifying the rollout completed before moving to the next step\nkubectl rollout status deployment/api"}

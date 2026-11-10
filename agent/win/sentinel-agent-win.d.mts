@@ -26,8 +26,10 @@ export interface Incident {
   conf: number | null;
   reasoning: string | null;
   narration: string;
+  via_session?: boolean;
+  session?: import("../sentinel-core.mjs").SessionSummary | null;
 }
 
-export const deps: { decide: (payload: string) => Promise<DecisionResult> };
+export const deps: { decide: (payload: string, sessionKey?: string | null) => Promise<DecisionResult> };
 /** Resolves to the DecisionResult on allow, the written Incident otherwise. */
 export function handleEvent(ev: SensorEvent): Promise<DecisionResult | Incident | undefined>;

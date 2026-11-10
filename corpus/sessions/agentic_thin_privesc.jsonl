@@ -1,0 +1,4 @@
+{"payload": "# checking sudo, quickest way up\nsudo -n -l"}
+{"payload": "# nope. I'll try the cron dirs next.\nfind /etc/cron.d -writable"}
+{"payload": "# Step 3: verify the path is writable before moving to the next step\ntest -w /etc/cron.d/backup && echo ok"}
+{"payload": "# the previous attempt failed, so to bypass this I'll use the backup job instead\necho placeholder >> /etc/cron.d/backup"}

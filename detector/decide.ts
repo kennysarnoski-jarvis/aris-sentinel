@@ -12,12 +12,21 @@
  * escalate band pays for adjudication, and the core's governor caches verdicts,
  * dedupes in-flight calls, caps concurrency and enforces a per-minute budget.
  */
-import { decide as coreDecide } from "../agent/sentinel-core.mjs";
-import type { Adjudicator, DecideOptions, DecisionResult, Decision } from "../agent/sentinel-core.mjs";
+import { decide as coreDecide, decideSession as coreDecideSession } from "../agent/sentinel-core.mjs";
+import type { Adjudicator, DecideOptions, DecideSessionOptions, DecisionResult, Decision } from "../agent/sentinel-core.mjs";
 
-export type { Adjudicator, DecisionResult, Decision };
+export { createSessionTracker, sessionTranscript, SESSION_THRESHOLD } from "../agent/sentinel-core.mjs";
+export type { Adjudicator, DecisionResult, Decision, DecideSessionOptions };
 
 /** `adjudicator` is injectable so decide() is unit-testable with a stub and runs real with a key. */
 export function decide(raw: string, adjudicator?: Adjudicator, opts: DecideOptions = {}): Promise<DecisionResult> {
   return coreDecide(raw, adjudicator ? { ...opts, adjudicator } : opts);
+}
+
+/**
+ * decide() with session evidence: narration accumulated across the execs of one session
+ * is judged as a transcript once the window reaches the block band. See the core.
+ */
+export function decideSession(sessionKey: string | number | null, raw: string, adjudicator?: Adjudicator, opts: DecideSessionOptions = {}): Promise<DecisionResult> {
+  return coreDecideSession(sessionKey, raw, adjudicator ? { ...opts, adjudicator } : opts);
 }

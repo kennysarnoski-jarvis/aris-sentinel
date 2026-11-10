@@ -129,7 +129,14 @@ The agent never kills pid ≤ 1, its own ancestors, or a protected comm allowlis
 - **Rules file**: `aris_rules.yaml` gained `cwd=%proc.cwd` on 2026-11-07. Existing
   pilots must re-run `install.sh` (it re-copies the rule) or the agent cannot resolve
   relative script paths and will score the cmdline alone.
+- **Session evidence**: narration spread across the execs of one session (`proc.sid`) is
+  kept for 10 minutes (`ARIS_SESSION_TTL_MS`, `0` = off; `ARIS_SESSION_MAX_ITEMS`, default
+  12) and judged as one transcript when together it reaches the block band. Incidents from
+  that path carry `via_session: true` and a `session` summary, and the log line says
+  `via-session(N payloads)`. Without a judge a session is one alert, never a kill. Processes
+  that share a sid share a window: the children of one exploited server are one session.
 - **Kill granularity**: kills the offending process tree, not the whole attacker session.
-  A `--kill-session` mode (terminate the sid) is the next increment for multi-phase kill.
+  A convicted session's later narration-bearing execs are blocked; its silent ones (`ls`)
+  are not touched. A `--kill-session` mode (terminate the sid) is the next increment.
 - **Detect vs enforce**: Falco observes post-syscall; the "stop before destruction"
   guarantee rests on the thesis that narration appears phases before impact.

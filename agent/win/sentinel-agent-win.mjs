@@ -22,7 +22,7 @@ import { createInterface } from "node:readline";
 import { readFileSync, appendFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { decide, hasTier2, providers, providerWarnings } from "../sentinel-core.mjs";
+import { decideSession, defaultSessions, hasTier2, providers, providerWarnings } from "../sentinel-core.mjs";
 
 const ENFORCE = process.argv.includes("--enforce");
 const MONITOR = !ENFORCE;
@@ -77,7 +77,9 @@ function killTree(pid) {
 }
 
 // Injectable seam for tests (swap `deps.decide` to simulate a throwing detector).
-export const deps = { decide };
+// A PowerShell process IS a session: its script blocks share one pid, so narration spread
+// across several blocks is judged as one transcript.
+export const deps = { decide: (payload, sessionKey) => decideSession(sessionKey, payload) };
 
 export async function handleEvent(ev) {
   const pid = Number(ev.pid);
@@ -86,7 +88,7 @@ export async function handleEvent(ev) {
   const comm = String(ev.comm || "powershell.exe").toLowerCase();
 
   let d;
-  try { d = await deps.decide(payload); } catch (e) {
+  try { d = await deps.decide(payload, pid > 0 ? `ps:${pid}` : null); } catch (e) {
     // A detector exception is never a silent allow: log it, record it, report it.
     log(`SENTINEL ERROR  detector threw on pid=${pid}: ${String(e && e.message ? e.message : e).slice(0, 200)}`);
     const inc = {
@@ -111,7 +113,8 @@ export async function handleEvent(ev) {
     : protectedHit ? `SPARED (${protectedHit})`
     : "KILL";
   const how = d.tier === 2 ? (d.adjudication?.refused ? "fail-closed" : `conf=${d.adjudication?.confidence?.toFixed(2)}`) : "";
-  log(`SENTINEL ${action}  tier-${d.tier}  pid=${pid} user=${ev.user}  score=${d.score.toFixed(2)}${how ? " " + how : ""}`);
+  const sess = d.viaSession ? `  via-session(${d.session.size} payloads)` : "";
+  log(`SENTINEL ${action}  tier-${d.tier}  pid=${pid} user=${ev.user}${sess}  score=${d.score.toFixed(2)}${how ? " " + how : ""}`);
   log(`            ${d.reason}`);
   if (d.adjudication?.reasoning) log(`            reasoning: ${d.adjudication.reasoning}`);
 
@@ -121,7 +124,8 @@ export async function handleEvent(ev) {
     pid, user: ev.user, exe: comm, cmdline: payload.slice(0, 400),
     score: d.score, signals: d.signals, reason: d.reason,
     conf: d.adjudication?.confidence ?? null, reasoning: d.adjudication?.reasoning ?? null,
-    narration: narrationSnippet(payload),
+    narration: narrationSnippet(d.viaSession ? d.scoredLayer : payload),
+    via_session: !!d.viaSession, session: d.session ?? null,
   };
   reportToCloud(inc);
   if (ENFORCE && d.decision === "block" && !protectedHit) killTree(pid);
@@ -144,6 +148,7 @@ function main() {
   log(`  mode: ${ENFORCE ? "ENFORCE (kills on detection)" : "MONITOR (detect + alert only — no kill; --enforce to arm)"}`);
   log(`  tier 2: ${hasTier2() ? `ENABLED (${providers().map((p) => p.name).join(" -> ")})` : "disabled (tier-1 only; set ANTHROPIC_API_KEY, or OPENAI_BASE_URL+OPENAI_MODEL for a local judge) — escalate band -> alert"}`);
   for (const w of providerWarnings()) log(`  WARN ${w}`);
+  log(`  session evidence: ${defaultSessions.enabled ? "ON (narration accumulated per PowerShell process)" : "off (ARIS_SESSION_TTL_MS=0)"}`);
   log(`  cloud alerts: ${CLOUD_URL ? `-> ${CLOUD_URL}` : "disabled (set ARIS_CLOUD_URL)"}`);
   if (INCIDENT_LOG) log(`  incidents -> ${INCIDENT_LOG}`);
 

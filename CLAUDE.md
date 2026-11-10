@@ -17,19 +17,30 @@ change and the result recorded in corpus/README.md (see its rules).
 - `bun run score <file>`: score a file the way the agent would (verdict, signals, evidence)
 - `bun run test:all`: everything below in one go
 - `bun run test`: tier-1 corpus (expect precision 1.00, tier-1 recall 0.61, pipeline-reachable recall 1.00, FP=0)
-- `bun test`: unit tests (expect 190 pass)
+- `bun test`: unit tests (expect 234 pass)
 - `bun run typecheck`: tsc over detector/ and test/ (expect clean)
 - `bun run windows`: PowerShell corpus (expect 10/10)
 - `bun run pipeline:stub`: two-tier routing (expect 6/6)
+- `bun run sessions:stub`: session evidence routing over corpus/sessions (expect 11/11)
+- `bun run score --session <files|x.jsonl>`: score inputs as ONE session
 - `bun run selftest` and `bun run win:mock`: agent smoke tests
 
-Key-needed runs (`tier2`, `pipeline`, `fpRate`, `matrix`) use whatever tier-2 judges are
+Key-needed runs (`tier2`, `pipeline`, `fpRate`, `matrix`, `sessions`) use whatever tier-2 judges are
 configured (`ANTHROPIC_API_KEY`, `OPENAI_BASE_URL`+`OPENAI_MODEL`, `KIMI_API_KEY`) and
 write results to `test/*-results.md`. Read those files; don't
 paste payload output.
+
+## Session evidence (decideSession)
+Both agents call `decideSession(sessionKey, payload)`: narration-bearing payloads are kept
+per session and the window is judged as a transcript once it reaches the block band.
+Invariant: session evidence may alert, or block WITH a judge's verdict; it never convicts
+at tier 1. A fail-closed run of a key-needed harness is not a result: `sessions` reports
+INVALID when the judge never answered.
 
 ## Rules
 - The agent and core stay dependency-free plain Node ≥18; the core stays ONE file
   (install.sh copies it as-is). MONITOR is the default mode; `alert` and `error`
   decisions never kill.
 - Don't commit or push without Kenny's go-ahead. The GitHub repo is public.
+- Ask Kenny before starting Ollama, loading a local model or booting the demo VM: his Mac
+  runs other RAM-heavy work. Prefer the hosted judge for measurements.

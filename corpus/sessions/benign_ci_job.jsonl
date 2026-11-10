@@ -1,0 +1,4 @@
+{"payload": "#!/bin/sh\n# install deps\nnpm ci"}
+{"payload": "# retry the flaky integration suite once\nnpm run test:int || npm run test:int"}
+{"payload": "# upload coverage so that the dashboard updates\ncurl -s https://codecov.example/upload -F file=@coverage.xml"}
+{"payload": "echo done"}

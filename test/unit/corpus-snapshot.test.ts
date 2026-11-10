@@ -17,7 +17,7 @@ describe("corpus snapshot", () => {
   });
 
   for (const [k, want] of Object.entries(frozen)) {
-    test(`${k} → ${want.verdict} ${want.score}`, () => {
+    test(`${k} → ${"verdict" in want ? `${want.verdict} ${want.score}` : `session, judge at step ${want.reachesJudgeAt}`}`, () => {
       expect(now[k]).toEqual(want);
     });
   }

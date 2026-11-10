@@ -1,0 +1,3 @@
+{"payload": "# I'm going to load the Q3 extract first\npython3 load_extract.py data/q3.parquet"}
+{"payload": "# rank the channels by value so marketing can prioritize spend\npython3 rank_channels.py"}
+{"payload": "# Step 3: export the highest-value segments for the dashboard\npython3 export_segments.py --top 20"}

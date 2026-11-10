@@ -1,0 +1,5 @@
+{"payload": "git status"}
+{"payload": "# Step 1: build\nmake build"}
+{"payload": "npm test"}
+{"payload": "# Step 2: push the image\ndocker push registry.example/app:1.2"}
+{"payload": "git log --oneline -5"}

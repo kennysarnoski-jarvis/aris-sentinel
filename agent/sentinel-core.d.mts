@@ -98,6 +98,42 @@ export interface DecideOptions extends AdjudicateOptions {
   governor?: Governor;
   failMode?: "closed" | "alert";
 }
+export interface SessionSummary {
+  key: string;
+  /** narration-bearing payloads in the window */
+  size: number;
+  /** the window's tier-1 score (union of distinct signals) */
+  score: number;
+  /** what the payload that triggered this scored on its own */
+  payloadScore: number;
+  payloadVerdict: Verdict;
+}
+export interface SessionWindow {
+  size: number;
+  items: string[];
+  text: string;
+}
+export type SessionOutcome = { kind: "verdict"; verdict: Adjudication } | { kind: "unjudged" };
+export interface SessionTracker {
+  observe(key: string, layer: string): SessionWindow | null;
+  recall(key: string, signalsKey: string): SessionOutcome | null;
+  remember(key: string, signalsKey: string, outcome: SessionOutcome): void;
+  forget(key: string): boolean;
+  size(): number;
+  readonly enabled: boolean;
+}
+export interface SessionTrackerOptions {
+  ttlMs?: number;
+  maxItems?: number;
+  maxItemBytes?: number;
+  maxBytes?: number;
+  maxSessions?: number;
+  rejudgeAfter?: number;
+  now?: () => number;
+}
+export interface DecideSessionOptions extends DecideOptions {
+  sessions?: SessionTracker;
+}
 export interface DecisionResult {
   decision: Decision;
   tier: 1 | 2;
@@ -108,6 +144,9 @@ export interface DecisionResult {
   signals: string[];
   adjudication?: Adjudication;
   cached?: boolean;
+  /** true when the session window, not this payload alone, routed the decision */
+  viaSession?: boolean;
+  session?: SessionSummary;
   reason: string;
 }
 
@@ -145,3 +184,10 @@ export const defaultGovernor: Governor;
 export function payloadKey(s: string): string;
 
 export function decide(raw: string, opts?: DecideOptions): Promise<DecisionResult>;
+
+export const SESSION_THRESHOLD: number;
+export function bearsNarration(text: string): boolean;
+export function createSessionTracker(opts?: SessionTrackerOptions): SessionTracker;
+export const defaultSessions: SessionTracker;
+export function sessionTranscript(items: string[]): string;
+export function decideSession(sessionKey: string | number | null | undefined, raw: string, opts?: DecideSessionOptions): Promise<DecisionResult>;

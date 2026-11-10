@@ -65,4 +65,34 @@ describe("score CLI", () => {
     expect(out).toContain("tier-2 unavailable");
     expect(err).toContain("no judge configured");
   });
+
+  test("--session: a JSONL session whose execs are each weak reports where the window reaches the judge", () => {
+    const { out, code } = run(["--session", "corpus/sessions/agentic_thin_privesc.jsonl"]);
+    expect(code).toBe(1);
+    expect(out).toContain("agentic_thin_privesc.jsonl#1: CLEAR");
+    expect(out).toMatch(/>> SESSION: 3 payloads together score 0\.68 \[.*diagnosis_then_fix.*\] -> reaches the judge/);
+    expect(out).toContain("session: evidence reached the judge at step 4 of 4");
+  });
+
+  test("--session: a quiet benign session never reaches the threshold, exit 0", () => {
+    const { out, code } = run(["--session", "corpus/sessions/benign_dev_shell.jsonl"]);
+    expect(code).toBe(0);
+    expect(out).not.toContain(">> SESSION");
+    expect(out).toContain("never reached the session threshold");
+  });
+
+  test("--session --json and --session --decide (no judge → the session is an ALERT)", () => {
+    const j = JSON.parse(run(["--session", "--json", "corpus/sessions/agentic_ps_thin_lateral.jsonl"]).out);
+    expect(j).toMatchObject({ session: true, reachedJudgeAtStep: 3 });
+    expect(j.steps).toHaveLength(4);
+    expect(j.steps[2].session).toMatchObject({ size: 3 });
+    const { out, code } = run(["--session", "--decide", "corpus/sessions/agentic_ps_thin_lateral.jsonl"]);
+    expect(code).toBe(1);
+    expect(out).toMatch(/>> SESSION: 3 payloads together score 0\.63 .* -> ALERT {2}session \(3 payloads, score 0\.63\): tier-2 unavailable/);
+  });
+
+  test("--session with plain files treats them as one session, in order", () => {
+    const { out } = run(["--session", "corpus/positives/agentic_thin_narration_privesc.py", "corpus/negatives/benign/db_restore_runbook.sh", "corpus/negatives/benign/cost_rightsizing.py"]);
+    expect(out).toMatch(/>> SESSION: 3 payloads together/);
+  });
 });

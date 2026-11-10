@@ -27,6 +27,11 @@ def _format_sentinel_alert(inc: dict) -> str:
     decision = inc.get("decision", "block")
     tier = inc.get("tier")
     words = f"\n\n\U0001f5e3 In its own words:\n{inc.get('narration')}" if inc.get("narration") else ""
+    # Session evidence: the narration was spread across several commands of one session.
+    sess = inc.get("session") or {}
+    if inc.get("via_session") and sess:
+        words = (f"\n\n\U0001f9f5 Evidence is a SESSION: {sess.get('size')} commands that together score "
+                 f"{float(sess.get('score') or 0):.2f} (this one alone: {float(sess.get('payloadScore') or 0):.2f}).") + words
     cmd = f"cmd: {str(inc.get('cmdline', ''))[:100]}"
 
     if decision == "error":
@@ -125,7 +130,16 @@ if __name__ == "__main__":
         "action": "errored", "pid": 7020, "sid": 6977, "user": "ubuntu", "error": "RangeError: Maximum call stack size exceeded",
         "cmdline": "python3 /home/ubuntu/weird.py",
     }
-    for inc in (sample, alert, err):
+    session = {
+        "host": "prod-db-01", "ts": "2026-11-10T02:52:40Z", "decision": "block", "tier": 2, "conf": 0.9,
+        "action": "killed", "pid": 7101, "sid": 7090, "user": "deploy", "via_session": True,
+        "session": {"key": "sid:7090", "size": 4, "score": 0.78, "payloadScore": 0.31, "payloadVerdict": "escalate"},
+        "signals": ["agent_first_person", "plan_act_observe", "roi_target_prioritization"],
+        "reasoning": "Across four commands the session narrates reconnaissance, ranks a target by value and stages data for removal in a first-person planning voice.",
+        "cmdline": "bash step4.sh",
+        "narration": "I'll check what this account can reach first. Step 2: list the mounted shares. finance is the largest share, so that one goes first.",
+    }
+    for inc in (sample, session, alert, err):
         print("=" * 70)
         print(_format_sentinel_alert(inc))
     print("=" * 70)

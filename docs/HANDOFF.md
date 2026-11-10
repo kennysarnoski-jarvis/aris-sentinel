@@ -50,3 +50,17 @@ signals as before the refactor (`test/corpus-snapshot.json`).
   before the next pilot).
 - The key-needed suites (`tier2`, `pipeline`, `fpRate`, `matrix`) were not re-run; their
   last results are in `test/*-results.md`. Stubbed-fetch unit tests cover the wire shape.
+
+## 2026-11-10 — session evidence
+`decideSession()` in the core: narration accumulated across the execs of one session
+(Linux `proc.sid`, Windows PowerShell pid) is judged as a transcript once the window
+reaches the block band. It can alert, or block with a judge's verdict; it never convicts at
+tier 1. Verdicts are reused until the evidence grows. Both agents use it; `decide()` is
+unchanged for callers with no session. Evidence: `corpus/sessions/` (11 files),
+`bun run sessions:stub` 11/11, live 11/11 on Claude Opus 5.5 and on a local `arete:27b`,
+baseline on Claude 3/5 → 5/5 sessions (see corpus/README.md). 234 unit tests; the corpus
+snapshot gained 11 session rows and no existing row moved.
+
+Not done: live validation of the session path on a Falco box (the unit tests drive
+`handleEvent` with real `proc.sid` fields, but no kernel was involved); session-level
+kill; the baseline was not run on the local judge.

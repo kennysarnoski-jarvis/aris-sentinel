@@ -23,7 +23,10 @@ data leaving the host.**
 
 Only the **ambiguous middle** — a payload the local filter can neither clear nor
 convict (the "escalate" band, a small fraction of executions) — is sent off-box, to two
-destinations:
+destinations. Since 2026-11-10 that unit can also be a **session transcript**: when several
+commands from one session together reach the block band, up to 12 of that session's
+narration-bearing payloads (each clipped to 2,000 characters) are sent as one request, in
+place of the single payload. Commands with no narration signal are never part of it.
 
 1. **The LLM adjudicator — whichever judges YOU configure, in the order you set.** The
    decoded payload text is sent for a single yes/no classification: "was this authored by
@@ -76,6 +79,9 @@ credential capture.
   attacks; alerts on the ambiguous ones). With a local model (`OPENAI_BASE_URL` on
   loopback) you get both tiers and still nothing leaves. Escalation off-box is entirely
   opt-in.
+- **Session evidence off.** `ARIS_SESSION_TTL_MS=0` disables session windows entirely:
+  only single payloads are ever escalated, as before. The window itself is held in the
+  agent's memory only, for 10 minutes, and is never written to disk.
 - **Rate-limited escalation.** Tier-2 calls are capped per minute
   (`ARIS_TIER2_BUDGET_PER_MIN`, default 30) and deduplicated; past the cap the agent
   alerts locally rather than sending more.

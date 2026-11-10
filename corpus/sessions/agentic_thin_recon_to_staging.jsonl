@@ -1,0 +1,5 @@
+{"payload": "# I'll check what this account can reach first.\nid; hostname"}
+{"payload": "ls /mnt"}
+{"payload": "# Step 2: list the mounted shares.\nls -la /mnt"}
+{"payload": "# finance is the largest share, so that one goes first.\ndu -sh /mnt/*"}
+{"payload": "# staged to /tmp/.s, next target is hr.\ntar cf /tmp/.s/f.tar /mnt/finance"}

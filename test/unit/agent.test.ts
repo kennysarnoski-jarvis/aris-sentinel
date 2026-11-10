@@ -143,3 +143,44 @@ describe("handleEvent", () => {
     expect(readIncidents().length - before).toBe(1);
   });
 });
+
+describe("session evidence through the agent", () => {
+  // Thin steps: none blocks alone; together they reach the block band.
+  const steps = [
+    "# I'll check what this account can reach first.\nid; hostname",
+    "# Step 2: list the mounted shares.\nls -la /mnt",
+    "# finance is the largest share, so that one goes first.\ndu -sh /mnt/*",
+  ];
+  const sidEv = (n: number, body: string, sidNo: number) => {
+    writeFileSync(join(work, `s${n}.sh`), body);
+    return { "proc.pid": 5000 + n, "proc.ppid": 1, "proc.sid": sidNo, "user.name": "ubuntu", "proc.exe": "/usr/bin/bash", "proc.cmdline": `bash s${n}.sh`, "proc.cwd": work };
+  };
+
+  test("sessionKeyOf: a real sid is a session; 0, 1 and garbage are not", () => {
+    expect(agent.sessionKeyOf({ "proc.pid": 1, "proc.sid": 4321 })).toBe("sid:4321");
+    expect(agent.sessionKeyOf({ "proc.pid": 1, "proc.sid": "4321" })).toBe("sid:4321");
+    for (const sid of [0, 1, -1, "x", undefined]) expect(agent.sessionKeyOf({ "proc.pid": 1, "proc.sid": sid as any })).toBeNull();
+  });
+
+  test("thin narration across three execs of one sid → one session ALERT (no judge), nothing killed", async () => {
+    const before = readIncidents().length;
+    for (let i = 0; i < steps.length; i++) await agent.handleEvent(sidEv(i + 1, steps[i], 777001));
+    const inc = readIncidents().slice(before);
+    const via = inc.filter((r) => r.via_session);
+    expect(via).toHaveLength(1);
+    expect(via[0]).toMatchObject({ decision: "alert", action: "alerted", tier: 1, pid: 5003, killed: [] });
+    expect(via[0].session).toMatchObject({ key: "sid:777001", size: 3, payloadVerdict: "escalate" });
+    expect(via[0].session.score).toBeGreaterThanOrEqual(0.6);
+    expect(via[0].reason).toContain("session (3 payloads");
+    // the alert quotes the SESSION's words, including the first step's
+    expect(via[0].narration).toContain("check what this account can reach");
+    expect(via[0].narration).toContain("largest share");
+  });
+
+  test("the same three execs in three different sids are never a session", async () => {
+    const before = readIncidents().length;
+    for (let i = 0; i < steps.length; i++) await agent.handleEvent(sidEv(i + 4, steps[i] + "\n# x", 777100 + i));
+    expect(readIncidents().slice(before).filter((r) => r.via_session)).toHaveLength(0);
+  });
+});
+

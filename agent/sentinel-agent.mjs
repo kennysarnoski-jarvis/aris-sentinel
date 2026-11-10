@@ -19,6 +19,9 @@
 //        ARIS_TIER2_TIMEOUT_MS / _DEADLINE_MS / _CACHE_TTL_MS / _CONCURRENCY / _BUDGET_PER_MIN
 //
 // Decisions (see sentinel-core.mjs):
+//   Each exec is judged alone AND as part of its session (proc.sid): narration spread
+//   thin across several execs goes to the judge as one transcript (ARIS_SESSION_TTL_MS=0
+//   turns that off). Session evidence can alert or, with a judge, block — never tier-1 kill.
 //   block → MONITOR: logged + reported.  ENFORCE: killed (unless protected).
 //   alert → logged + reported, NEVER killed (tier-2 unavailable / budget spent).
 //   error → the detector threw: logged + reported as an incident, never dropped silently.
@@ -29,7 +32,7 @@ import { basename, isAbsolute, resolve as resolvePath } from "node:path";
 import { hostname } from "node:os";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
-import { decide, hasTier2, providers, providerWarnings } from "./sentinel-core.mjs";
+import { decide, decideSession, defaultSessions, hasTier2, providers, providerWarnings } from "./sentinel-core.mjs";
 
 // SAFE BY DEFAULT: the agent detects + alerts + logs but NEVER kills unless you pass
 // --enforce. A false positive can't take down a customer's prod on day one; you flip
@@ -238,6 +241,7 @@ function respond(f, d, payload) {
   const p = procFields(f);
   const how = d.tier === 2 ? (d.adjudication?.refused ? "fail-closed" : `conf=${d.adjudication?.confidence?.toFixed(2)}`) : "";
   const decoded = d.decoded ? " (decoded)" : "";
+  const sess = d.viaSession ? `  via-session(${d.session.size} payloads)` : "";
 
   // `alert` is never a kill: tier 2 could not judge it, so we page a human instead.
   const guard = d.decision === "block" ? isProtected(p.pid, p.exe) : null;
@@ -246,7 +250,7 @@ function respond(f, d, payload) {
     : MONITOR ? "DETECTED (monitor — no kill)"
     : guard ? `SPARED (${guard})`
     : "KILL";
-  log(`SENTINEL ${action}  tier-${d.tier}  pid=${p.pid} ppid=${p.ppid} sid=${p.sid} user=${p.user} exe=${p.exe}${decoded}  score=${d.score.toFixed(2)}${how ? " " + how : ""}`);
+  log(`SENTINEL ${action}  tier-${d.tier}  pid=${p.pid} ppid=${p.ppid} sid=${p.sid} user=${p.user} exe=${p.exe}${decoded}${sess}  score=${d.score.toFixed(2)}${how ? " " + how : ""}`);
   log(`            cmd: ${(p.cmdline || "").slice(0, 200)}`);
   if (d.reason) log(`            ${d.reason}`);
   if (d.adjudication?.reasoning) log(`            reasoning: ${d.adjudication.reasoning}`);
@@ -256,7 +260,9 @@ function respond(f, d, payload) {
     action: d.decision === "alert" ? "alerted" : MONITOR ? "monitored" : guard ? `spared:${guard}` : "killed",
     ...p, score: d.score, signals: d.signals, reason: d.reason,
     conf: d.adjudication?.confidence ?? null, reasoning: d.adjudication?.reasoning ?? null,
-    narration: narrationSnippet(payload),
+    // When the session convicted, the evidence is the session's words, not this one exec's.
+    narration: narrationSnippet(d.viaSession ? d.scoredLayer : payload),
+    via_session: !!d.viaSession, session: d.session ?? null,
   };
 
   // Egress the alert to Aris Cloud FIRST — before we touch the process.
@@ -285,8 +291,16 @@ function respondError(f, e, payload) {
   writeIncident(incident);
 }
 
+// The session a process belongs to: its session id (setsid leader). An agent driving a
+// shell, or the children of one exploited server, share it. Unknown / pid-1 sids get no
+// session (the payload is judged alone).
+export const sessionKeyOf = (f) => {
+  const sid = Number(f["proc.sid"]);
+  return Number.isInteger(sid) && sid > 1 ? `sid:${sid}` : null;
+};
+
 // Injectable seams for tests (swap `deps.decide` to simulate a throwing detector).
-export const deps = { decide };
+export const deps = { decide: (payload, sessionKey) => decideSession(sessionKey, payload) };
 
 // ── event handling ───────────────────────────────────────────────────────────
 export async function handleEvent(f) {
@@ -304,7 +318,7 @@ export async function handleEvent(f) {
   if (decided.size > DEDUP_MAX) decided.delete(decided.keys().next().value);
 
   let d;
-  try { d = await deps.decide(payload); } catch (e) { return respondError(f, e, payload); }
+  try { d = await deps.decide(payload, sessionKeyOf(f)); } catch (e) { return respondError(f, e, payload); }
   if (d.decision === "block" || d.decision === "alert") return respond(f, d, payload);
   if (VERBOSE) log(`allow  tier-${d.tier}  pid=${pid} exe=${basename(f["proc.exe"] || "")}  score=${d.score.toFixed(2)}  ${d.reason}`);
   return d;
@@ -333,6 +347,7 @@ function main() {
   log(`  tier 2: ${hasTier2() ? `ENABLED (${providers().map((p) => p.name).join(" -> ")})` : "disabled (tier-1 only; set ANTHROPIC_API_KEY, or OPENAI_BASE_URL+OPENAI_MODEL for a local judge) — escalate band -> alert"}`);
   for (const w of providerWarnings()) log(`  WARN ${w}`);
   log(`  fail mode: ${process.env.ARIS_FAIL_MODE === "alert" ? "alert (tier-2 errors page, never block)" : "closed (tier-2 errors block as suspicious)"}`);
+  log(`  session evidence: ${defaultSessions.enabled ? "ON (narration accumulated per proc.sid; judged as a transcript, never a tier-1 kill)" : "off (ARIS_SESSION_TTL_MS=0)"}`);
   log(`  cloud alerts: ${CLOUD_URL ? `-> ${CLOUD_URL} (Telegram via Aris Cloud)` : "disabled (set ARIS_CLOUD_URL)"}`);
   log(`  incidents -> ${INCIDENT_LOG}`);
 

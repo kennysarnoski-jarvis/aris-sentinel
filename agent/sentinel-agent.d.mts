@@ -13,7 +13,8 @@ export interface FalcoFields {
   [k: string]: unknown;
 }
 
-export const deps: { decide: (payload: string) => Promise<DecisionResult> };
+export const deps: { decide: (payload: string, sessionKey?: string | null) => Promise<DecisionResult> };
+export function sessionKeyOf(f: FalcoFields): string | null;
 export function hasInlineCode(exe: string, args: string[]): boolean;
 export function resolveScript(tok: string, ctx?: { cwd?: string; pid?: number }): string | null;
 export function extractPayload(f: FalcoFields): string;

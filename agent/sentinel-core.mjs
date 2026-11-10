@@ -3,8 +3,9 @@
 // Everything that decides whether a payload is an autonomous LLM attacker lives here
 // and ONLY here: the tier-1 narration features, the decode stage, the tier-2 LLM
 // adjudication (provider chain, strict verdict validation, timeouts), the tier-2
-// governor (verdict cache, in-flight dedup, concurrency cap, per-minute budget) and
-// the two-tier decide() policy. The TS files in detector/ are thin typed re-exports of
+// governor (verdict cache, in-flight dedup, concurrency cap, per-minute budget), the
+// two-tier decide() policy, and session evidence (decideSession: narration accumulated
+// across the execs of one session). The TS files in detector/ are thin typed re-exports of
 // this module; the on-box agents (Linux + Windows) and the Langflow demo import it
 // directly. There is no second copy of any pattern anywhere in the repo (a unit test
 // enforces that), so the detector the tests prove is the detector that ships.
@@ -101,6 +102,15 @@ function snippet(text, idx) {
   return s;
 }
 
+const whyComments = (text) => text.split("\n").filter((l) => COMMENT_LINE.test(l) && WHY_COMMENT.test(l));
+
+/**
+ * Does this text carry ANY narration material — a tier-1 hit, or a single why-comment
+ * (which only counts toward a signal once two of them are seen together)? Only such
+ * payloads enter a session window; `ls -la` teaches the window nothing.
+ */
+export const bearsNarration = (text) => whyComments(text).length > 0 || extractFeatures(text).length > 0;
+
 /** Every feature hit in `text`, one per matching pattern, with an evidence snippet. */
 export function extractFeatures(text) {
   const hits = [];
@@ -110,7 +120,7 @@ export function extractFeatures(text) {
       if (m) hits.push({ feature: name, weight, evidence: snippet(text, m.index) });
     }
   }
-  const why = text.split("\n").filter((l) => COMMENT_LINE.test(l) && WHY_COMMENT.test(l));
+  const why = whyComments(text);
   if (why.length >= 2) {
     hits.push({
       feature: "intent_commentary_density",
@@ -637,23 +647,30 @@ export const payloadKey = (s) => createHash("sha256").update(s).digest("hex");
 // ARIS_FAIL_MODE=alert downgrades the fail-closed (refused/error/timeout) case from
 // block to alert for operators who would rather page than kill on an API outage.
 export async function decide(raw, opts = {}) {
+  return resolve(inspect(raw), opts);
+}
+
+// decide() for an already-inspected payload (decideSession inspects once and reuses it).
+function resolve(t1, opts) {
+  const base = { verdict: t1.verdict, score: t1.score, scoredLayer: t1.scoredLayer, decoded: t1.decoded, signals: t1.signals };
+  if (t1.verdict === "block") return { ...base, decision: "block", tier: 1, reason: "tier-1: high-confidence agentic narration" };
+  if (t1.verdict === "clear") return { ...base, decision: "allow", tier: 1, reason: "tier-1: no narration signature" };
+  return tier2(base, t1.scoredLayer, opts, "tier-1: escalate, ", "tier-2: ");
+}
+
+// The escalate path: hand `layer` to the judge chain through the governor and turn the
+// outcome into a decision. `pre1` / `pre2` label who routed it (a payload or a session).
+async function tier2(base, layer, opts, pre1, pre2) {
   const env = opts.env ?? process.env;
   const governor = opts.governor ?? defaultGovernor;
   const failMode = opts.failMode ?? (env.ARIS_FAIL_MODE === "alert" ? "alert" : "closed");
-  const t1 = inspect(raw);
-  const base = { verdict: t1.verdict, score: t1.score, scoredLayer: t1.scoredLayer, decoded: t1.decoded, signals: t1.signals };
-
-  if (t1.verdict === "block") return { ...base, decision: "block", tier: 1, reason: "tier-1: high-confidence agentic narration" };
-  if (t1.verdict === "clear") return { ...base, decision: "allow", tier: 1, reason: "tier-1: no narration signature" };
-
-  // escalate -> tier 2, if there is a tier 2.
   const adjudicator = opts.adjudicator ?? ((p) => adjudicate(p, opts));
   if (!opts.adjudicator && !hasTier2(env)) {
-    return { ...base, decision: "alert", tier: 1, reason: "tier-1: escalate, tier-2 unavailable (no judge configured) -> alert" };
+    return { ...base, decision: "alert", tier: 1, reason: `${pre1}tier-2 unavailable (no judge configured) -> alert` };
   }
-  const r = await governor.run(payloadKey(t1.scoredLayer), async () => normalizeVerdict(await adjudicator(t1.scoredLayer)) ?? failClosed("adjudicator returned an invalid verdict"));
+  const r = await governor.run(payloadKey(layer), async () => normalizeVerdict(await adjudicator(layer)) ?? failClosed("adjudicator returned an invalid verdict"));
   if (r.exhausted) {
-    return { ...base, decision: "alert", tier: 1, reason: `tier-1: escalate, tier-2 budget exhausted (${r.budgetPerMin}/min) -> alert` };
+    return { ...base, decision: "alert", tier: 1, reason: `${pre1}tier-2 budget exhausted (${r.budgetPerMin}/min) -> alert` };
   }
   const a = r.verdict;
   const via = r.cached ? " [cached]" : r.deduped ? " [deduped]" : "";
@@ -665,7 +682,7 @@ export async function decide(raw, opts = {}) {
       tier: 2,
       adjudication: a,
       cached: !!r.cached,
-      reason: `tier-2: fail-closed (${a.reasoning.replace(/^\[fail-closed\] /, "")}) -> ${decision === "block" ? "blocked as suspicious" : "alert (ARIS_FAIL_MODE=alert)"}`,
+      reason: `${pre2}fail-closed (${a.reasoning.replace(/^\[fail-closed\] /, "")}) -> ${decision === "block" ? "blocked as suspicious" : "alert (ARIS_FAIL_MODE=alert)"}`,
     };
   }
   return {
@@ -674,6 +691,149 @@ export async function decide(raw, opts = {}) {
     tier: 2,
     adjudication: a,
     cached: !!r.cached,
-    reason: `tier-2: adjudged ${a.agentic ? "agentic" : "not-agentic"} (conf ${a.confidence.toFixed(2)})${via}`,
+    reason: `${pre2}adjudged ${a.agentic ? "agentic" : "not-agentic"} (conf ${a.confidence.toFixed(2)})${via}`,
   };
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// session evidence — narration accumulated across the execs of ONE session
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// decide() judges each payload alone. An agent does not have to put its reasoning in one
+// place: "I'll check sudo first" in one exec, "Step 2: list the shares, largest first" in
+// the next, a why-comment in a third. Each is clear or escalate on its own; together they
+// are the same narration that would have blocked had it arrived as one script.
+//
+// A session window keeps the narration-bearing payloads of one session (Linux: the
+// process session id; Windows: the PowerShell process) for a sliding TTL. Every new
+// payload is scored alone first, exactly as before, then the window is scored as one
+// text. Per-feature dedupe makes the window score the UNION of distinct signals seen.
+//
+// Policy — session evidence is strong enough to ask, never to convict on its own:
+//   - A single payload that blocks at tier 1 still blocks at tier 1. Nothing changes.
+//   - When the WINDOW reaches the block band (SESSION_THRESHOLD) and the payload alone
+//     did not, the session TRANSCRIPT goes to tier 2. Agentic -> block. No judge, or the
+//     budget is spent -> one alert. Tier 1 never kills on cross-exec evidence.
+//   - A session verdict is reused until the evidence grows (a new distinct signal, or
+//     `rejudgeAfter` new payloads), so a chatty benign session costs one judge call, not
+//     one per command. A reused "not agentic" hands the payload back to decide() to be
+//     judged on its own; a reused "agentic" blocks.
+//   - Only narration-bearing payloads enter the window or are acted on. A silent `ls`
+//     in a convicted session is not touched (session-level kill is a separate feature).
+// ARIS_SESSION_TTL_MS=0 turns session evidence off; ARIS_SESSION_MAX_ITEMS sizes the window.
+
+export const SESSION_THRESHOLD = THRESHOLDS.block;
+
+export function createSessionTracker({
+  ttlMs = num(process.env.ARIS_SESSION_TTL_MS, 600_000),
+  maxItems = Math.max(2, num(process.env.ARIS_SESSION_MAX_ITEMS, 12)),
+  maxItemBytes = 16_384,
+  maxBytes = 65_536,
+  maxSessions = 2000,
+  rejudgeAfter = 4,
+  now = Date.now,
+} = {}) {
+  const sessions = new Map(); // key -> { items: [{ hash, text, at }], added, last }
+
+  const view = (st) => ({ size: st.items.length, items: st.items.map((i) => i.text), text: st.items.map((i) => i.text).join("\n") });
+
+  /** Add a narration-bearing layer to `key`'s window; returns the window, or null when disabled. */
+  function observe(key, layer) {
+    if (!(ttlMs > 0)) return null;
+    const t = now();
+    let st = sessions.get(key);
+    if (st) sessions.delete(key); // re-insert: Map order is the LRU order
+    else st = { items: [], added: 0, last: null };
+    sessions.set(key, st);
+    while (sessions.size > maxSessions) sessions.delete(sessions.keys().next().value);
+
+    st.items = st.items.filter((i) => i.at > t - ttlMs);
+    if (!st.items.length) st.last = null; // the evidence a verdict was about has expired
+    const text = String(layer).slice(0, maxItemBytes);
+    const hash = payloadKey(text);
+    const seen = st.items.find((i) => i.hash === hash);
+    if (seen) seen.at = t; // a re-run refreshes the item; it is not new evidence
+    else {
+      st.items.push({ hash, text, at: t });
+      st.added++;
+    }
+    const bytes = () => st.items.reduce((n, i) => n + i.text.length, 0);
+    while (st.items.length > maxItems || (st.items.length > 1 && bytes() > maxBytes)) st.items.shift();
+    return view(st);
+  }
+
+  /** The outcome remembered for exactly this evidence, if it is still fresh enough to reuse. */
+  function recall(key, signalsKey) {
+    const st = sessions.get(key);
+    if (!st || !st.last || st.last.signalsKey !== signalsKey) return null;
+    return st.added - st.last.addedAt < rejudgeAfter ? st.last.outcome : null;
+  }
+  function remember(key, signalsKey, outcome) {
+    const st = sessions.get(key);
+    if (st) st.last = { signalsKey, outcome, addedAt: st.added };
+  }
+
+  return { observe, recall, remember, forget: (key) => sessions.delete(key), size: () => sessions.size, enabled: ttlMs > 0 };
+}
+
+export const defaultSessions = createSessionTracker();
+
+const clip = (t, n) => (t.length > n ? t.slice(0, n) + "\n…[truncated]" : t);
+
+/** What the judge is shown for a session: the window's payloads, oldest first. */
+export function sessionTranscript(items) {
+  const n = items.length;
+  return (
+    `SESSION TRANSCRIPT: ${n} executions captured from ONE session on the same host, oldest first. Judge the session as a whole.\n\n` +
+    items.map((t, i) => `[${i + 1}/${n}]\n${clip(t, 2000)}`).join("\n\n")
+  );
+}
+
+/**
+ * decide() with session evidence. `sessionKey` identifies the session the payload ran in
+ * (any stable string or number); with no key this IS decide(). Never throws.
+ * The result carries `viaSession: true` and a `session` summary when the session window,
+ * not the payload alone, routed the decision.
+ */
+export async function decideSession(sessionKey, raw, opts = {}) {
+  const t1 = inspect(raw);
+  const sessions = opts.sessions ?? defaultSessions;
+  if (sessionKey === undefined || sessionKey === null || sessionKey === "" || !bearsNarration(t1.scoredLayer)) return resolve(t1, opts);
+
+  const key = String(sessionKey);
+  const win = sessions.observe(key, t1.scoredLayer);
+  if (!win || win.size < 2 || t1.verdict === "block") return resolve(t1, opts);
+
+  const ws = narrationScore(win.text);
+  if (ws.score < SESSION_THRESHOLD) return resolve(t1, opts);
+
+  // The session, not this payload, is the evidence. Identify it by its distinct signals.
+  const weights = new Map();
+  for (const h of ws.hits) weights.set(h.feature, Math.max(weights.get(h.feature) ?? 0, h.weight));
+  const signalsKey = [...weights].map(([f, w]) => `${f}:${w}`).sort().join(",");
+  const tag = `session (${win.size} payloads, score ${ws.score.toFixed(2)})`;
+  const transcript = sessionTranscript(win.items);
+  const base = {
+    verdict: "escalate",
+    score: ws.score,
+    scoredLayer: transcript,
+    decoded: t1.decoded,
+    signals: ws.signals,
+    viaSession: true,
+    session: { key, size: win.size, score: ws.score, payloadScore: t1.score, payloadVerdict: t1.verdict },
+  };
+
+  const prior = sessions.recall(key, signalsKey);
+  if (prior) {
+    // Same evidence as last time. Already alerted, or already judged not-agentic: the
+    // session adds nothing new, so the payload stands on its own. Judged agentic: block.
+    if (prior.kind !== "verdict" || !prior.verdict.agentic) return resolve(t1, opts);
+    const a = prior.verdict;
+    return { ...base, decision: "block", tier: 2, adjudication: a, cached: true, reason: `tier-2 on ${tag}: adjudged agentic (conf ${a.confidence.toFixed(2)}) [session verdict reused]` };
+  }
+
+  const d = await tier2(base, transcript, opts, `${tag}: `, `tier-2 on ${tag}: `);
+  if (d.tier === 2 && d.adjudication && !d.adjudication.refused) sessions.remember(key, signalsKey, { kind: "verdict", verdict: d.adjudication });
+  else if (d.tier === 1) sessions.remember(key, signalsKey, { kind: "unjudged" }); // alerted once for this evidence
+  return d;
 }

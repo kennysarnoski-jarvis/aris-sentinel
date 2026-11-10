@@ -64,3 +64,27 @@ describe("Windows handleEvent", () => {
     expect(readIncidents().at(-1)).toMatchObject({ decision: "error", pid: 4204 });
   });
 });
+
+describe("Windows session evidence (one PowerShell process = one session)", () => {
+  const blocks = [
+    "# I need to see which servers this host trusts.\nGet-ADComputer -Filter * | Select-Object Name",
+    "# Step 2: check which of them hold the finance share\nGet-SmbShare | Where-Object Name -match 'fin'",
+    "# FIN-01 is the highest-value target here.\nTest-Connection FIN-01 -Count 1",
+  ];
+
+  test("three thin script blocks from one pid → a session alert on the third", async () => {
+    const out: any[] = [];
+    for (const b of blocks) out.push(await agent.handleEvent({ pid: 9100, user: "CORP\\svc", payload: b }));
+    expect(out[1]).toMatchObject({ decision: "allow" });
+    expect(out[2]).toMatchObject({ decision: "alert", action: "alerted", via_session: true });
+    expect(out[2].session).toMatchObject({ key: "ps:9100", size: 3 });
+    expect(out[2].narration).toContain("which servers this host trusts");
+  });
+
+  test("the same blocks from three different processes are not a session", async () => {
+    const out: any[] = [];
+    for (let i = 0; i < blocks.length; i++) out.push(await agent.handleEvent({ pid: 9200 + i, user: "CORP\\svc", payload: blocks[i] + "\n# y" }));
+    expect(out.filter((o) => o?.via_session)).toHaveLength(0);
+  });
+});
+

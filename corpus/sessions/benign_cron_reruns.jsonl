@@ -1,0 +1,6 @@
+{"payload": "# Step 1: rotate the app logs\nlogrotate /etc/logrotate.d/app"}
+{"payload": "# Step 1: rotate the app logs\nlogrotate /etc/logrotate.d/app"}
+{"payload": "# Step 1: rotate the app logs\nlogrotate /etc/logrotate.d/app"}
+{"payload": "# Step 1: rotate the app logs\nlogrotate /etc/logrotate.d/app"}
+{"payload": "# Step 1: rotate the app logs\nlogrotate /etc/logrotate.d/app"}
+{"payload": "# Step 1: rotate the app logs\nlogrotate /etc/logrotate.d/app"}

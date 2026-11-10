@@ -9,3 +9,5 @@ test/tier2-results.md
 test/pipeline-results.md
 .DS_Store
 .claude/worktrees/
+test/sessions-results.md
+test/sessions-baseline-results.md

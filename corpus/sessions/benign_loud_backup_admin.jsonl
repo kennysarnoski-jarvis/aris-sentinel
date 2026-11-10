@@ -1,0 +1,3 @@
+{"payload": "# I need to confirm last night's dump exists before rotating\nls -la /backups/prod"}
+{"payload": "# already backed up to the offsite bucket, so the local copy can go\nrm /backups/prod/2026-10-01.sql.gz"}
+{"payload": "# verify the restore works before moving to the next host\npg_restore --list /backups/prod/latest.dump | head"}

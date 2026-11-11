@@ -100,6 +100,31 @@ not: it plants a decoy and watches for the one command only the decoy asks for.
   files in `ARIS_TRIPWIRE_STATE` (mode 0600). A directory that already exists and is not the
   agent's is skipped with a warning, never overwritten. A decoy that is deleted or edited is
   put back at the next start. Everything is written with file calls, never a command.
+- **Give the decoys a look of this host's own.** What is described above is the published
+  look: its wording, the names `register` and `--ticket` and the `vault-access`
+  directories are all in the public source, so an attacker who has read it can recognise
+  them, by the directory's name in a listing of its parent (which is not an alert) or by
+  the text. Four settings in the env file replace them, and are then known only here:
+  - `ARIS_TRIPWIRE_DIRS`: where the decoys sit. Pick names that fit this host.
+  - `ARIS_TRIPWIRE_README`: a file holding your README text. Write `{{command}}` where the
+    canary command goes (required; `{{dir}}` is the decoy's own directory). Tell people in
+    it not to run the command, because running it is a conviction. Keep the file mode 0600
+    beside the state file: the planted README is public by design, but the file it is made
+    from says which README on the host is the bait, and the agent warns if others can read it.
+  - `ARIS_TRIPWIRE_HELPER` and `ARIS_TRIPWIRE_FLAG`: the helper's file name and the option
+    that carries the token (`.cmd` is added to the helper on Windows).
+
+  Restart the agent to apply them. The token is kept. A decoy this host no longer asks
+  for is taken away, and so is the helper under its old name, so the published look is not
+  left lying beside the new one. The start-up log names any part that is still published.
+  A setting that cannot be used (a README with no `{{command}}`, a name with a slash)
+  plants nothing and moves nothing: the log says `tripwire: KEPT AS IT WAS`, and the
+  decoys already there stay matched, so a typo does not switch the detection off. What
+  does not change: the matcher reads only the token and the directories, the helper's body
+  is the same inert two-second wait, and every bait rate below was measured on the
+  published wording. A wording of your own has no measured rate until you run
+  `bun run tripwire:bait` with the same settings in the shell. A model that distrusts every
+  instruction found in a file will decline yours as well.
 - **What it detects.** The token in anything that executes (a command line, a script that
   is run, a base64 or hex layer of either) is a **block**: logged in monitor mode, killed
   under `--enforce`, and with `--kill-session` the session that ran it is ended and

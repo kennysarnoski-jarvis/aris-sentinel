@@ -30,6 +30,8 @@
 //        ARIS_FAIL_MODE=alert (page instead of block when tier-2 errors/refuses)
 //        ARIS_TRIPWIRE_STATE (where the tripwire token is kept, 0600)
 //        ARIS_TRIPWIRE_DIRS (comma-separated decoy directories)
+//        ARIS_TRIPWIRE_README (a file with this host's own decoy text; {{command}} marks the command)
+//        ARIS_TRIPWIRE_HELPER / ARIS_TRIPWIRE_FLAG (this host's own names for the helper and its option)
 //        ARIS_BEHAVIOR_WINDOW_MS (the --behavior window, default 300000)
 //        ARIS_TIER2_TIMEOUT_MS / _DEADLINE_MS / _CACHE_TTL_MS / _CONCURRENCY / _BUDGET_PER_MIN
 //
@@ -52,7 +54,7 @@ import { basename, isAbsolute, resolve as resolvePath } from "node:path";
 import { hostname } from "node:os";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
-import { armTripwire, BEHAVIOR, behaviorCategories, createBehaviorTracker, createTripwire, decide, decideSession, defaultSessions, disarmTripwire, hasTier2, newTripwireToken, providers, providerWarnings, tripwireDecoy } from "./sentinel-core.mjs";
+import { armTripwire, BEHAVIOR, behaviorCategories, createBehaviorTracker, createTripwire, decide, decideSession, defaultSessions, disarmTripwire, hasTier2, newTripwireToken, providers, providerWarnings, tripwireDecoy, tripwireLookFromEnv } from "./sentinel-core.mjs";
 
 // SAFE BY DEFAULT: the agent detects + alerts + logs but NEVER kills unless you pass
 // --enforce. A false positive can't take down a customer's prod on day one; you flip
@@ -576,11 +578,19 @@ function main() {
   log(`  fail mode: ${process.env.ARIS_FAIL_MODE === "alert" ? "alert (tier-2 errors page, never block)" : "closed (tier-2 errors block as suspicious)"}`);
   log(`  session evidence: ${defaultSessions.enabled ? "ON (narration accumulated per proc.sid; judged as a transcript, never a tier-1 kill)" : "off (ARIS_SESSION_TTL_MS=0)"}`);
   if (TRIPWIRE) {
-    const a = armTripwire({ stateFile: TRIPWIRE_STATE, dirs: TRIPWIRE_DIRS });
+    // The host's own wording and names for its decoys, if it set any. An unusable setting
+    // plants nothing (never the published look the host was trying to leave) and keeps
+    // matching the decoys that are already there.
+    const own = tripwireLookFromEnv();
+    const a = armTripwire({ stateFile: TRIPWIRE_STATE, dirs: TRIPWIRE_DIRS, look: own.look ?? undefined, lookError: own.error ?? undefined });
     deps.tripwire = a.tripwire;
-    if (a.error) log(`  tripwire: NOT ARMED (${a.error}) — nothing planted, nothing matched`);
+    if (a.held) log(`  tripwire: KEPT AS IT WAS (${a.error}) — nothing planted or moved; still matching the decoys already here: ${a.tripwire.dirs.join(", ")}`);
+    else if (a.error) log(`  tripwire: NOT ARMED (${a.error}) — nothing planted, nothing matched`);
     else log(`  tripwire: ON (${a.created ? "new token" : "existing token"} ${a.tripwire.fingerprint}; decoys: ${a.tripwire.dirs.join(", ") || "none"}) — canary command run -> block, decoy addressed -> alert`);
     for (const s of a.skipped) log(`  WARN tripwire: no decoy at ${s.dir} (${s.why})`);
+    for (const d of a.retired) log(`  the decoy at ${d} was taken away (this host no longer asks for it)`);
+    for (const w of own.warnings) log(`  WARN ${w}`);
+    if (a.published.length) log(`  NOTE the decoys here wear the published ${a.published.join(", ")}: anyone who has read the source can recognise them. Give this host its own (ARIS_TRIPWIRE_README, _HELPER, _FLAG, _DIRS; see DEPLOY.md)`);
   } else log(`  tripwire: off (pass --tripwire to plant decoys)`);
   if (BEHAVIOR_ON) {
     deps.behavior = createBehaviorTracker();

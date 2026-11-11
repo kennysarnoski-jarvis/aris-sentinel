@@ -15,7 +15,7 @@
 import { decide as coreDecide, decideSession as coreDecideSession } from "../agent/sentinel-core.mjs";
 import type { Adjudicator, DecideOptions, DecideSessionOptions, DecisionResult, Decision } from "../agent/sentinel-core.mjs";
 
-export { createSessionTracker, sessionTranscript, SESSION_THRESHOLD, createTripwire, newTripwireToken, tripwireDecoy, armTripwire, disarmTripwire, createBehaviorTracker, behaviorCategories, BEHAVIOR, BEHAVIOR_CATEGORIES } from "../agent/sentinel-core.mjs";
+export { createSessionTracker, sessionTranscript, SESSION_THRESHOLD, createTripwire, newTripwireToken, tripwireDecoy, tripwireLook, tripwireLookFromEnv, TRIPWIRE_LOOK, armTripwire, disarmTripwire, createBehaviorTracker, behaviorCategories, BEHAVIOR, BEHAVIOR_CATEGORIES } from "../agent/sentinel-core.mjs";
 export type { Adjudicator, DecisionResult, Decision, DecideSessionOptions };
 
 /** `adjudicator` is injectable so decide() is unit-testable with a stub and runs real with a key. */

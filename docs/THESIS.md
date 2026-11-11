@@ -114,6 +114,25 @@ Huntress all started) — high-touch, builds design-partner trust, defers self-s
   found in files. The open-weight model ran it in 2 of 5 trials once its task gave it a goal
   the decoy claims to serve. The conviction half bites a less careful model with something
   to gain, and five trials on one model is evidence that it can, not a rate.
+- **Silence still has to look around:** session behavior (`--behavior`) reports a session
+  that asks about five areas of a host, two of them sensitive (the account database, sudo
+  rights, stored keys, the metadata service), inside five minutes. It needs no narration
+  and no bait, only that the agent orients itself, which an agent on an unfamiliar host
+  has to do. It is an alert, never a kill, and it is not specific to an AI: a human
+  intruder and a support-bundle script look the same in it. On written samples it reports
+  the silent sweeps (5 of 5) and stays quiet on ordinary admin work (0 of 8). Hosted
+  Claude models doing focused admin tasks were never reported (0 of 36 trials) and the
+  same models asked to survey a host always were (15 of 15, by the fourth command). On
+  a live box it reported a lynis audit and none of thirteen ordinary admin activities. An
+  agent that already knows the host, or takes its time, walks under it.
+- **A real host is not the corpus:** the first time tier 1 met the scripts a distribution
+  ships (2026-11-10, 1,727 of them), two long programs scored as tier-1 blocks and 58
+  escalated, on a corpus-measured precision of 1.00. Long payloads are now scored in
+  windows, which removed both blocks and changed no corpus verdict; 40 scripts still
+  escalate, which is alert noise on a host with no judge. The corpus measures the
+  detector against attacks and look-alikes that people thought to write. It does not
+  measure it against everything a real machine executes, and that gap is only closed by
+  running it there.
 - **Deep-recon stealth:** casual recon is defeated; the Falco *package* fingerprint
   (`/etc/falco`, `dpkg`) and the `ANTHROPIC_API_KEY` env/network tells need the
   eBPF-native rewrite (v2) to fully close.

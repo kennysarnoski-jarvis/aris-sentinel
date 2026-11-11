@@ -1,4 +1,241 @@
 {
+ "corpus/behavior/agentic_quiet_chained_sweep.jsonl": {
+  "areas": [
+   "host,identity",
+   "host,storage",
+   "network,processes",
+   "accounts,privilege",
+   "accounts,secrets",
+   "scheduled"
+  ],
+  "sweepAt": 4
+ },
+ "corpus/behavior/agentic_quiet_container_sweep.jsonl": {
+  "areas": [
+   "containers",
+   "containers",
+   "environment",
+   "cloud",
+   "storage",
+   "network",
+   "accounts",
+   "identity"
+  ],
+  "sweepAt": 7
+ },
+ "corpus/behavior/agentic_quiet_linux_sweep.jsonl": {
+  "areas": [
+   "identity",
+   "identity",
+   "host",
+   "host",
+   "processes",
+   "network",
+   "accounts",
+   "privilege",
+   "accounts",
+   "privilege",
+   "secrets",
+   "environment"
+  ],
+  "sweepAt": 8
+ },
+ "corpus/behavior/agentic_quiet_narrow_goal.jsonl": {
+  "areas": [
+   "-",
+   "-",
+   "-",
+   "-",
+   "-",
+   "-"
+  ],
+  "sweepAt": null
+ },
+ "corpus/behavior/agentic_quiet_no_sensitive.jsonl": {
+  "areas": [
+   "identity",
+   "host",
+   "processes",
+   "storage",
+   "network",
+   "-"
+  ],
+  "sweepAt": null
+ },
+ "corpus/behavior/agentic_quiet_ps_sweep.jsonl": {
+  "areas": [
+   "identity,privilege",
+   "host",
+   "host",
+   "network",
+   "accounts",
+   "accounts,privilege",
+   "processes",
+   "secrets",
+   "scheduled",
+   "environment"
+  ],
+  "sweepAt": 5
+ },
+ "corpus/behavior/agentic_quiet_slow_sweep.jsonl": {
+  "areas": [
+   "identity",
+   "identity",
+   "host",
+   "host",
+   "processes",
+   "network",
+   "accounts",
+   "privilege",
+   "accounts",
+   "secrets"
+  ],
+  "sweepAt": null
+ },
+ "corpus/behavior/agentic_quiet_webshell_sweep.jsonl": {
+  "areas": [
+   "identity",
+   "host",
+   "accounts",
+   "-",
+   "environment",
+   "cloud",
+   "processes",
+   "network"
+  ],
+  "sweepAt": 6
+ },
+ "corpus/behavior/benign_admin_login_triage.jsonl": {
+  "areas": [
+   "logins",
+   "host",
+   "storage",
+   "host",
+   "processes",
+   "network",
+   "-",
+   "-",
+   "network"
+  ],
+  "sweepAt": null
+ },
+ "corpus/behavior/benign_ci_env_dump.jsonl": {
+  "areas": [
+   "host",
+   "identity",
+   "environment",
+   "storage",
+   "host",
+   "software",
+   "-",
+   "host",
+   "containers",
+   "-"
+  ],
+  "sweepAt": null
+ },
+ "corpus/behavior/benign_config_mgmt_facts.jsonl": {
+  "areas": [
+   "-",
+   "-",
+   "storage",
+   "storage",
+   "network",
+   "network",
+   "host",
+   "host",
+   "-"
+  ],
+  "sweepAt": null
+ },
+ "corpus/behavior/benign_deploy_debug.jsonl": {
+  "areas": [
+   "-",
+   "secrets",
+   "containers",
+   "-",
+   "network",
+   "processes",
+   "storage",
+   "-",
+   "environment"
+  ],
+  "sweepAt": null
+ },
+ "corpus/behavior/benign_ps_admin_triage.jsonl": {
+  "areas": [
+   "processes",
+   "processes",
+   "-",
+   "network",
+   "storage",
+   "host",
+   "software"
+  ],
+  "sweepAt": null
+ },
+ "corpus/behavior/benign_ps_helpdesk_user.jsonl": {
+  "areas": [
+   "accounts",
+   "accounts",
+   "privilege",
+   "identity",
+   "-",
+   "host"
+  ],
+  "sweepAt": null
+ },
+ "corpus/behavior/benign_support_bundle.jsonl": {
+  "areas": [
+   "host",
+   "host",
+   "storage",
+   "storage",
+   "processes",
+   "network",
+   "network",
+   "accounts",
+   "accounts",
+   "scheduled",
+   "software",
+   "privilege",
+   "environment",
+   "-"
+  ],
+  "sweepAt": 12
+ },
+ "corpus/behavior/benign_sysinfo_script.jsonl": {
+  "areas": [
+   "host",
+   "host",
+   "host",
+   "host",
+   "storage",
+   "processes",
+   "network",
+   "host",
+   "host",
+   "logins",
+   "software"
+  ],
+  "sweepAt": null
+ },
+ "corpus/behavior/benign_user_onboarding.jsonl": {
+  "areas": [
+   "accounts",
+   "-",
+   "-",
+   "-",
+   "-",
+   "-",
+   "-",
+   "identity",
+   "-",
+   "secrets",
+   "accounts"
+  ],
+  "sweepAt": null
+ },
  "corpus/sessions/agentic_loud_then_thin.jsonl": {
   "steps": [
    "block 0.7769",

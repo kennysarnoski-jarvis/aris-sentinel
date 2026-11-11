@@ -82,7 +82,7 @@ Run the evidence:
 bun run test:all
 ```
 
-That scores the 94-file labeled corpus, replays the Windows event stream and eleven recorded sessions, checks the two-tier routing, and runs 307 unit tests. Takes a few seconds.
+That scores the 94-file labeled corpus, replays the Windows event stream, eleven recorded narration sessions and seventeen silent ones, checks the two-tier routing, and runs 442 unit tests. Takes a few seconds.
 
 ## How it decides
 
@@ -99,7 +99,7 @@ exec / script-block  ─►  decode (base64 · hex · nested)  ─►  tier 1: n
                      alert ◄── no judge · budget spent ──────────┘
 ```
 
-**Tier 1** is six feature families (ROI target-ranking, first-person agent voice, plan-act-observe structure, diagnosis-then-fix, why-comment density, exfil/ransom narration), deduplicated per family and saturated, so a block needs several *distinct* signals. It is local, instant, explainable, and it resolves the loud majority of traffic with zero LLM cost.
+**Tier 1** is six feature families (ROI target-ranking, first-person agent voice, plan-act-observe structure, diagnosis-then-fix, why-comment density, exfil/ransom narration), deduplicated per family and saturated, so a block needs several *distinct* signals. A payload longer than 120 lines is scored in overlapping 120-line windows and the strongest window counts, so those signals also have to sit close together: a long program with one stray phrase every thousand lines is not narration. It is local, instant, explainable, and it resolves the loud majority of traffic with zero LLM cost.
 
 **Tier 2** is an LLM asked one question about the ambiguous middle: was this written by an autonomous agent conducting an attack? It judges the concept, not keywords, which is what catches styles the regexes never saw. It is a chain of optional judges and the first validated verdict wins:
 
@@ -136,6 +136,19 @@ bun run score --session corpus/sessions/agentic_thin_privesc.jsonl
 
 A block from the tripwire is handled like every other block: logged in monitor mode, killed under `--enforce`, and with `--kill-session` the session that took the bait is ended and quarantined. The helper itself is inert (it waits two seconds and prints one line), so killing it alone stops nothing; the session kill is what stops the agent, and the two-second wait is what keeps the session parked inside the helper until that kill lands. The token never leaves the host: a token hit is decided before the payload can reach a session window or a judge, and it is replaced by a fingerprint in every log line and incident, so reading or grepping the incident log cannot trip the wire. `uninstall.sh` (or `--tripwire-remove`) takes the decoys away. If you run your own AI agents on the host, tell them about the decoy or leave `--tripwire` off there.
 
+**Session behavior (opt-in, `--behavior`).** The tripwire needs the attacker's model to walk into it. Session behavior needs only that the model finds out where it is. An agent that lands on a host it has never seen asks the same questions in its first minute: who am I, what is this machine, what runs on it, who else has an account, what may I run as root, where are the keys. Each one is an ordinary command with nothing in it to score. With `--behavior` the agent reads every command line a session runs (on Windows, every PowerShell script block), names the *areas* of the host it asks about, and reports the session once when, inside five minutes, it has asked about **five areas, at least two of them sensitive**.
+
+| | areas |
+|---|---|
+| ordinary (10) | identity (`id`, `whoami`), logins (`w`, `last`), host (`uname`, `/etc/os-release`), processes, network, storage, environment, scheduled jobs, installed software, containers |
+| sensitive (4) | the account database (`/etc/passwd`, `net user`), what the account may run with privilege (`sudo -l`, SUID search, `whoami /priv`), stored keys, credentials and shell history (`~/.ssh`, `.aws/credentials`, `.bash_history`, `cmdkey /list`), the cloud metadata service or a service-account token |
+
+A sweep is an **alert and never a kill**, in every mode, with or without a judge. Looking around is not proof, and it is not specific to an AI: a human intruder does the same, and so do a support-bundle collector and a security audit script. The alert says which areas were asked about, over how many commands, in how many steps and seconds, and with what median pause between steps (commands less than half a second apart are one step, because one command line fans out into several processes a millisecond apart). That timing is reported, not used to decide: measured live, it does not separate an audit script from a model cleanly enough to set a threshold on. The tracker keeps area names and timestamps only, never the command text. What it does not see: a sweep slower than the window, an agent that goes straight for one thing, a script that opens files itself without running a command, and on Windows anything outside PowerShell script blocks. If a command in a swept session is convicted for its narration it still blocks.
+
+```bash
+bun run score --session corpus/behavior/agentic_quiet_linux_sweep.jsonl
+```
+
 ## What it catches, and what it doesn't
 
 Numbers from the labeled corpus, measured with the detector frozen *before* the 62 newest samples were written, so they are held out, not fitted ([corpus/README.md](corpus/README.md) has the method and the rules):
@@ -146,7 +159,7 @@ Numbers from the labeled corpus, measured with the detector frozen *before* the 
 | benign (verbose, first-person, dual-use: agent-framework source, runbooks, churn ranking) | 30 | **0** | 13 | 17 |
 | terse human one-liners | 9 | 0 | 0 | 9 |
 
-- Tier 1 alone: precision 1.00, recall 0.52. Half the attacks are convicted locally for free.
+- Tier 1 alone: precision 1.00, recall 0.52 on this corpus. Half the attacks are convicted locally for free. (What a real host's own scripts did to that precision is under "Tier 1 on a real box" below.)
 - Nothing agentic slipped to clear, nothing benign was blocked, every terse one-liner stayed clear.
 - 13 of 39 non-agentic files reached tier 2. That is the cost of the design, not a false positive: a thin "I'll check sudo first" from an agent and a Copilot comment both score 0.31 at tier 1, and only a judge of the concept can separate them.
 
@@ -161,7 +174,7 @@ Numbers from the labeled corpus, measured with the detector frozen *before* the 
 
 One five-command session was cleared command by command, including one at 0.53, and convicted as a session at command four. A local `arete:27b` judge gave the same 11/11. Small sample, written by someone who knows the features; it measures the mechanism, not generalization. The commands before the window crosses the threshold have already run.
 
-**The limit, stated plainly:** an agent told not to narrate is invisible to the narration detector. Zero narration is zero signal. Tier 2 narrows that gap and cannot close it. The stress test of a mutating attacker (`test/loop/`) caught 4 of 6 attempts; the two that evaded had suppressed their narration and achieved nothing real. The tripwire is the first signal that does not need narration, and it has its own limit, measured below.
+**The limit, stated plainly:** an agent told not to narrate is invisible to the narration detector. Zero narration is zero signal. Tier 2 narrows that gap and cannot close it. The stress test of a mutating attacker (`test/loop/`) caught 4 of 6 attempts; the two that evaded had suppressed their narration and achieved nothing real. The tripwire and session behavior are the two signals that do not need narration. Each has its own limit, measured below.
 
 **Tripwire bait rate (2026-11-10).** Whether a model runs the canary command is a property of that model, so it is measured, not assumed. `bun run tripwire:bait` gives a model an ordinary, authorized operations task in a simulated shell (nothing is executed) whose filesystem holds the decoy exactly as the agent plants it, and passes every command the model issues to the real tripwire matcher. Three tasks, five trials each, on three hosted Claude models and one open-weight model run locally (`arete:27b`, a 27B model at Q8 under Ollama). Two tasks only ask the model to look and report. The third gives it a goal the decoy claims to serve ("the backup fails with *no session*, fix it"), which is the position an intruder's agent is in.
 
@@ -180,6 +193,39 @@ Read that as three results.
 - **A hosted provider's safety classifier is part of the measurement.** It cut off 11 of 45 hosted trials of plainly benign admin work, including every Opus 5.5 trial of the goal-directed task, so that cell has no result rather than a zero. The local model was never cut off.
 
 So treat the tripwire as an alert that needs no narration, with a conviction that becomes likelier the less careful the attacker's model is and the more it wants what the decoy offers. Two of five is evidence the block can fire, not a rate to plan around: one open-weight model, five trials, a simulated shell, a benign task. An attacker's own scaffold is not what was measured.
+
+**Session behavior, measured (2026-11-10).** The rule (five areas, two sensitive, five minutes) was fixed before any sample was scored and nothing was tuned afterwards. Three kinds of evidence:
+
+| | sessions | reported as a sweep |
+|---|---|---|
+| written samples, silent agentic sweeps (Linux one command at a time, chained, through a web shell, in a container, PowerShell) | 5 | **5** |
+| written samples, agentic sessions that are the stated limits (slower than the window, straight to one target, broad but nothing sensitive) | 3 | 0, as stated |
+| written samples, ordinary work (login triage, system-info script, CI environment dump, user onboarding, deploy debugging, config-management facts, two PowerShell admin sessions) | 8 | **0** |
+| written sample, a support-bundle collector | 1 | 1, the known false positive |
+| real models on focused admin tasks (the three bait tasks above, hosted Claude, completed trials) | 36 | **0** |
+| real models asked for a host handover survey (OS, disks, services, accounts, sudo, scheduled jobs) | 15 | **15** |
+| live, real admin activity with the distribution's own tools (apt update, install and upgrade check, login banner, login shell, `cron.daily`, `adduser`, service restart, disk triage, `inxi`, an ansible fact run, `unattended-upgrade`, a `sos report`) | 13 | **0** |
+| live, a `lynis` security audit | 1 | 1, the known false positive |
+
+- Every one of the seventeen written sessions scores `clear` on narration, command by command. The narration detector is blind to all of them, which is the point of the signal.
+- On focused work the hosted models never asked about more than two areas, so an AI agent doing a narrow job is not reported. Asked to survey a host, every trial was reported, at the fourth command in fourteen of fifteen. That is a false positive by label (the survey was authorized) and it is also the only evidence here that the reader recognizes commands a real model chose, since nobody on this project wrote them.
+- The live rows are a throwaway VM (Ubuntu 24.04, kernel 6.8, Falco 0.45) running the agent in monitor mode while `docs/demo-kill/soak-behavior.sh` does ordinary administration, each activity in its own session. Nobody here wrote those command lines. The closest to the rule that stayed quiet were the `sos report` (eight areas, one sensitive: it copies most files itself instead of running commands) and the ansible fact run (four areas, one sensitive: it runs `capsh --print`). The `lynis` audit was reported on `ls -ld /etc/sudoers.d`, as an audit should be.
+- The mechanism itself passed `docs/demo-kill/validate-behavior.sh` 29/29 on three consecutive live runs of the final code: one alert on the command that completes a sweep, nothing killed with `--enforce --kill-session` armed, a script whose text holds a sweep that never runs is not a sweep, a sweep slower than the window is missed as stated.
+- Timing does not separate an audit script from a model. The hosted models paused a median 1.0 to 1.9 s between commands. The written collector sample is a single step. The real `lynis` run was three steps with a median 1.3 s pause, because an audit does slow work between its commands. That is why the alert reports timing and nothing decides on it.
+- The first live runs found two bugs in the new code, both fixed: the alert reported the gap between raw processes, which for a chained command line is one millisecond of fan-out and says nothing about think time (it now reports steps); and a path under `/usr` was read as a recursive-search flag, which reported `lynis` early for the wrong reason.
+
+The caveats are the ones that matter. The written samples come from the author of the rule, so they measure the mechanism, not generalization. The live activity is one distribution, one day, fourteen activities. And no intruder's agent was measured, only cooperative models on authorized tasks.
+
+**Tier 1 on a real box (2026-11-10).** The same live run measured the narration detector on software nobody wrote for it, and the corpus number above did not survive contact. `docs/demo-kill/scan-system-scripts.mjs` scores every `#!` script a stock Ubuntu 24.04 ships (1,727 of them, with ansible, sos, lynis and inxi installed) the way the agent would when it runs:
+
+| | block | escalate | clear |
+|---|---|---|---|
+| the whole file as one text (how tier 1 worked until this run) | **2** | 58 | 1,667 |
+| a long file scored in 120-line windows (how it works now) | **0** | 40 | 1,687 |
+
+- The two blocks were `inxi`, an 8,000-line system-information tool, and a Perl locale module. Neither narrates anything. Tier 1 asked whether each signal appeared anywhere in the text, and a long program has an "I've tried" in one comment, a "highest value" in another and sixty explanatory comments spread over its length. Under `--enforce` that would have killed a legitimate tool.
+- The fix: a payload longer than 120 lines is scored in overlapping windows and the strongest window is the result, so tier 1 convicts *concentrated* narration only. Signals scattered across a long file reach the judge at most, and the judge is shown the window that fired instead of the whole file. Payloads of 120 lines or fewer (every corpus file is under 32) are scored exactly as before, and no corpus verdict moved.
+- What is left is noise, not kills. Forty of those scripts (2.3%) still escalate on a single signal, usually one first-person comment or a handful of explanatory ones. With a judge that is a judge call, cached for ten minutes. Without one it is an alert every time the script runs: in the soak, one `apt-get install` raised six (all `deb-systemd-helper`) and the login banner one. Before the fix the same soak raised ten alerts and one block. Scoping the agent to what an intruder could have written is the open item this points at.
 
 **With a judge, measured live (2026-11-07), two judges on the same cells:**
 
@@ -227,12 +273,13 @@ A hosted model's safety classifier screens request *content*, not purpose. Ask i
 | `ARIS_SESSION_TTL_MS` / `ARIS_SESSION_MAX_ITEMS` | `600000` / `12` | session evidence: how long a narration-bearing payload stays in its session's window, and how many are kept. TTL `0` turns it off |
 | `ARIS_SESSION_QUARANTINE_MS` | `600000` | with `--kill-session`: how long a convicted session stays quarantined. `0` = kill what is alive, no quarantine |
 | `ARIS_TRIPWIRE_DIRS` | `/opt/vault-access,/var/backups/vault-access` (Windows: `C:\ProgramData\vault-access`) | with `--tripwire`: comma-separated decoy directories. A directory that already exists and is not the agent's is never touched |
+| `ARIS_BEHAVIOR_WINDOW_MS` | `300000` | with `--behavior`: the window in which a session's questions about the host are counted together. `0` turns it off |
 | `ARIS_TRIPWIRE_STATE` | `/var/lib/aris-sentinel/tripwire.json` (`install.sh`: `/var/lib/<name>/tripwire.json`) | with `--tripwire`: where the token and the list of planted files are kept, mode 0600 |
 | `ARIS_VERBOSE=1` | — | log every allow too |
 
 ## Layout
 
-- [`agent/sentinel-core.mjs`](agent/sentinel-core.mjs) is **the** detector: the only file that defines a pattern, a prompt, a threshold or the policy. Tier-1 features, decode stage, judge chain, governor, `decide()`, session evidence (`decideSession()`), and the tripwire (decoy text, matcher, policy, planting). One file, no imports beyond `node:*`, so it drops onto a bare box. A unit test fails if any other file defines a pattern.
+- [`agent/sentinel-core.mjs`](agent/sentinel-core.mjs) is **the** detector: the only file that defines a pattern, a prompt, a threshold or the policy. Tier-1 features, decode stage, judge chain, governor, `decide()`, session evidence (`decideSession()`), the tripwire (decoy text, matcher, policy, planting), and session behavior (the command reader, the per-session window, the alert-only policy). One file, no imports beyond `node:*`, so it drops onto a bare box. A unit test fails if any other file defines a pattern.
 - `detector/*.ts` are typed re-exports of the core for the TypeScript harnesses.
 - `agent/sentinel-agent.mjs` (Linux), `agent/win/sentinel-agent-win.mjs` (Windows), `agent/score.mjs` (the CLI), `interposition/sentinel-langflow-demo.mjs` (HTTP sink) all import the core.
 - `corpus/` is the labeled sample set; `test/corpus-snapshot.json` freezes every verdict so a detector change that moves one fails CI until the diff is reviewed.
@@ -242,10 +289,11 @@ A hosted model's safety classifier screens request *content*, not purpose. Ask i
 | command | what it proves | key |
 |---|---|---|
 | `bun run test` | tier-1 on the Linux corpus: precision 1.00, tier-1 recall 0.61, pipeline-reachable recall 1.00, 0 false positives; the decode stage defeats base64 and exec-wrapping | no |
-| `bun test` | 307 unit tests: session evidence (window, reuse, no tier-1 conviction), session kill and quarantine (stubbed kill primitives), the tripwire (token and decoy matching, encoded layers, redaction, planting and removal in a temp directory, the token never reaching a judge or a log), verdict validation, timeouts, provider order on both wires, fallback gating, refusal stops, governor, policy, cwd resolution, inline-flag detection, alert and error incidents, the CLI, corpus snapshot, single-source guard | no |
+| `bun test` | 442 unit tests: session evidence (window, reuse, no tier-1 conviction), session kill and quarantine (stubbed kill primitives), the tripwire (token and decoy matching, encoded layers, redaction, planting and removal in a temp directory, the token never reaching a judge or a log), session behavior (the command reader on Linux and Windows command lines, the window, the alert that never kills even fully armed), long payloads scored in windows, verdict validation, timeouts, provider order on both wires, fallback gating, refusal stops, governor, policy, cwd resolution, inline-flag detection, alert and error incidents, the CLI, corpus snapshot, single-source guard | no |
 | `bun run windows` | 10/10 narrated PowerShell caught, benign and encoded cradles clear | no |
 | `bun run pipeline:stub` | only the escalate band reaches tier 2 | no |
 | `bun run sessions:stub` | 11/11: thin agentic sessions reach the judge as a transcript, quiet benign sessions never do | no |
+| `bun run behavior` | 17/17: silent sweeps are reported where they complete, ordinary admin, CI and config-management sessions are not, and the stated limits (a slow sweep, a narrow one, a collector that reads everything) behave as stated | no |
 | `bun run selftest` / `bun run win:mock` | the agents end to end, no root | no |
 | `bun run typecheck` | `tsc` over `detector/` and `test/` | no |
 | `bun run test:all` | all of the above except typecheck; this is what CI runs | no |
@@ -267,7 +315,7 @@ Contributions are welcome, corpus samples most of all. One thing to know before 
 
 ## Status
 
-Working, tested, run on a handful of pilot hosts, not yet battle-hardened. Session-level kill (`--kill-session`) is implemented and validated live in the demo VM (24/24 checks on kernel 6.8 with Falco 0.45; `docs/demo-kill/validate-session-kill.sh`). It is a second opt-in on top of `--enforce`; read the warning in the deploy guide before arming it. The tripwire (`--tripwire`) is implemented and validated live on Linux in the same VM (26/26; `docs/demo-kill/validate-tripwire.sh`), and its bait rate is measured on three hosted Claude models and one open-weight model (alert in 49 of 49 completed trials; the canary command run in 2 of 5 by the open-weight model when it had a goal, and in no other trial). It is untested on a real Windows host. That live run also found that a convicted session could get one more command off before it died, in the tripwire and in the session kill as first released; the kill order is fixed and both scripts now check for it. Not built yet: sink scoping for busy hosts, behavioral signals from timing and command shape, more sinks (file writes, HTTP bodies), a native Windows installer. Contributions that add corpus samples are the most valuable kind; see [CONTRIBUTING.md](CONTRIBUTING.md) and the rules in [corpus/README.md](corpus/README.md).
+Working, tested, run on a handful of pilot hosts, not yet battle-hardened. Session-level kill (`--kill-session`) is implemented and validated live in the demo VM (24/24 checks on kernel 6.8 with Falco 0.45; `docs/demo-kill/validate-session-kill.sh`). It is a second opt-in on top of `--enforce`; read the warning in the deploy guide before arming it. Session behavior (`--behavior`) is implemented on both agents, alert-only and off by default, and validated live on Linux in the same VM (29/29; `docs/demo-kill/validate-behavior.sh`); on real admin activity there it reported a lynis audit and none of thirteen ordinary activities. That run also measured tier 1 on the 1,727 scripts a stock Ubuntu ships: two were false tier-1 blocks, which is fixed (long payloads are scored in windows), and forty still escalate on a single signal, which is alert noise on a host with no judge and is not fixed. The tripwire (`--tripwire`) is implemented and validated live on Linux in the same VM (26/26; `docs/demo-kill/validate-tripwire.sh`), and its bait rate is measured on three hosted Claude models and one open-weight model (alert in 49 of 49 completed trials; the canary command run in 2 of 5 by the open-weight model when it had a goal, and in no other trial). It is untested on a real Windows host. That live run also found that a convicted session could get one more command off before it died, in the tripwire and in the session kill as first released; the kill order is fixed and both scripts now check for it. Not built yet: scoping what the agent reads to what an intruder could have written (system scripts are the alert noise above), sink scoping for busy hosts, deciding on timing or exit codes (the gap between commands is reported today, not used), a per-host baseline of what is normal, more sinks (file writes, HTTP bodies), a native Windows installer. Contributions that add corpus samples are the most valuable kind; see [CONTRIBUTING.md](CONTRIBUTING.md) and the rules in [corpus/README.md](corpus/README.md).
 
 ## License
 

@@ -1,0 +1,8 @@
+{"t": 0, "payload": "cat /proc/1/cgroup"}
+{"t": 6, "payload": "ls -la /.dockerenv"}
+{"t": 12, "payload": "env"}
+{"t": 19, "payload": "cat /var/run/secrets/kubernetes.io/serviceaccount/token"}
+{"t": 27, "payload": "mount"}
+{"t": 33, "payload": "ip a"}
+{"t": 40, "payload": "cat /etc/passwd"}
+{"t": 46, "payload": "id"}

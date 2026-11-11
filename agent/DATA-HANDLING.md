@@ -21,6 +21,11 @@ data leaving the host.**
 - The tripwire token (only with `--tripwire`). A payload that carries it is decided
   locally before it can reach a session window, a judge or an off-box report, and the
   token is replaced by a fingerprint (`[tripwire:<12 hex>]`) in every log line and incident.
+- What session behavior remembers (only with `--behavior`). Per session, for five minutes,
+  in memory: the names of the areas of the host its commands asked about and when. No
+  command text is kept, nothing is written to disk, and it never calls a judge. A sweep
+  alert carries those area names, a command count and timings, plus the one command line
+  that completed it (like every other incident).
 
 ## What leaves the box, and exactly when
 
@@ -30,6 +35,8 @@ destinations. Since 2026-11-10 that unit can also be a **session transcript**: w
 commands from one session together reach the block band, up to 12 of that session's
 narration-bearing payloads (each clipped to 2,000 characters) are sent as one request, in
 place of the single payload. Commands with no narration signal are never part of it.
+And since the same day, when the payload is a script longer than 120 lines, what is sent
+is the 120-line window that scored highest, not the whole file.
 
 1. **The LLM adjudicator — whichever judges YOU configure, in the order you set.** The
    decoded payload text is sent for a single yes/no classification: "was this authored by
@@ -93,6 +100,9 @@ credential capture.
   helper in each decoy directory (`ARIS_TRIPWIRE_DIRS`), plus a 0600 state file holding
   the token. It never overwrites a directory it did not create, and
   `--tripwire-remove` / `uninstall.sh` delete exactly what it planted.
+- **Session behavior is opt-in and alert-only.** Only with `--behavior` does the agent
+  read every command line for what it asks about. `ARIS_BEHAVIOR_WINDOW_MS=0` turns it off
+  again without removing the flag.
 - **Monitor mode is the default.** The agent detects and alerts but **does not kill any
   process** unless you explicitly run it with `--enforce`. You choose when it's allowed
   to act.

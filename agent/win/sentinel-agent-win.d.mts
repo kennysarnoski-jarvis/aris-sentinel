@@ -30,12 +30,16 @@ export interface Incident {
   session?: import("../sentinel-core.mjs").SessionSummary | null;
   /** what the tripwire saw (never the token itself), or null */
   tripwire?: TripwireHit | null;
+  /** the sweep the session's behavior amounted to (area names only), or null */
+  behavior?: import("../sentinel-core.mjs").BehaviorHit | null;
 }
 
 export const deps: {
   decide: (payload: string, sessionKey?: string | null) => Promise<DecisionResult>;
   /** this host's tripwire once main() armed it (--tripwire); tests set their own */
   tripwire: Tripwire | null;
+  /** the session-behavior tracker once main() turned it on (--behavior); tests set their own */
+  behavior: import("../sentinel-core.mjs").BehaviorTracker | null;
 };
 /** Resolves to the DecisionResult on allow, the written Incident otherwise. */
 export function handleEvent(ev: SensorEvent): Promise<DecisionResult | Incident | undefined>;

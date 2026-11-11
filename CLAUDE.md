@@ -17,12 +17,13 @@ change and the result recorded in corpus/README.md (see its rules).
 - `bun run score <file>`: score a file the way the agent would (verdict, signals, evidence)
 - `bun run test:all`: everything below in one go
 - `bun run test`: tier-1 corpus (expect precision 1.00, tier-1 recall 0.61, pipeline-reachable recall 1.00, FP=0)
-- `bun test`: unit tests (expect 307 pass)
+- `bun test`: unit tests (expect 442 pass)
 - `bun run typecheck`: tsc over detector/ and test/ (expect clean)
 - `bun run windows`: PowerShell corpus (expect 10/10)
 - `bun run pipeline:stub`: two-tier routing (expect 6/6)
 - `bun run sessions:stub`: session evidence routing over corpus/sessions (expect 11/11)
-- `bun run score --session <files|x.jsonl>`: score inputs as ONE session
+- `bun run behavior`: session behavior over corpus/behavior (expect 17/17)
+- `bun run score --session <files|x.jsonl>`: score inputs as ONE session (also shows the areas each command asks about and where the session becomes a sweep)
 - `bun run selftest` and `bun run win:mock`: agent smoke tests
 
 Key-needed runs (`tier2`, `pipeline`, `fpRate`, `matrix`, `sessions`, `tripwire:bait`) use whatever tier-2 judges are
@@ -61,6 +62,33 @@ a command line: on a host with the agent armed that is a conviction. Tests build
 matcher with `createTripwire` and plant only in a temp directory. `bun run tripwire:bait`
 (key-needed) measures how often a model runs the canary command; live check (needs the
 Lima VM; ask Kenny first): `docs/demo-kill/validate-tripwire.sh`, expect 26/26.
+
+## Session behavior (--behavior, both agents)
+Opt-in. The core reads each command line (`behaviorCategories`), names the areas of the
+host it asks about (`BEHAVIOR_CATEGORIES`, four of them sensitive) and keeps them per
+session for `BEHAVIOR.windowMs`; five areas with two sensitive is a sweep. Invariants: a
+sweep is an alert and NEVER a kill, a quarantine or a judge call, in any mode; it is
+reported once per window; the tracker keeps area names and times, never command text; a
+payload carrying the tripwire token is never observed; the Linux agent passes the command
+line only (`ctx.command`), never the script file it appended for the narration scorer.
+`corpus/behavior/*.jsonl` (`{"t": seconds, "payload": ...}`) holds the sessions, including
+three agentic ones that are EXPECTED misses and one benign one that is an EXPECTED alert:
+do not "fix" those, they are the stated limits. The thresholds were fixed before the
+samples were scored; change one only by the corpus rule (score first, record it, snapshot).
+A sweep's `steps` groups execs under `BEHAVIOR.stepMs` apart: one command line fans out
+into several execs a millisecond apart, so only the pauses between steps mean anything.
+Live check (needs the Lima VM; ask Kenny first): `docs/demo-kill/validate-behavior.sh`,
+expect 29/29. `docs/demo-kill/soak-behavior.sh` (same VM) runs real admin activity under
+the agent and prints what was reported; it is a measurement, not a pass/fail.
+`bun run tripwire:bait -- --tasks survey` (key-needed) measures the rule on a real model.
+
+## Long payloads (WINDOW_LINES)
+`inspect()` scores a payload longer than `WINDOW_LINES` (120) lines in overlapping windows
+and returns the strongest; `scoredLayer` is then that window and `windowed` is true. Tier 1
+convicts CONCENTRATED narration only. This exists because, scored as one text, 2 of the
+1,727 scripts a stock Ubuntu ships were tier-1 blocks (`docs/demo-kill/scan-system-scripts.mjs`
+reproduces it). Never window session evidence (`narrationScore(win.text)` stays whole), and
+never raise the corpus above 120 lines per file without re-reading this.
 
 ## Rules
 - The agent and core stay dependency-free plain Node ≥18; the core stays ONE file

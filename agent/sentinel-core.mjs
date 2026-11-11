@@ -163,6 +163,42 @@ export function narrationScore(text) {
 }
 export { narrationScore as score };
 
+// ── long payloads ────────────────────────────────────────────────────────────
+// narrationScore() asks whether each signal is present ANYWHERE in the text. That is right
+// for what an agent writes (the corpus positives are 5 to 24 lines) and wrong for a long
+// program: an 8,000-line system tool has an "I've tried" in one comment, a "highest value"
+// in another and sixty why-comments spread over its length, and scored as one text it is a
+// tier-1 block. Found live on 2026-11-10: of the 1,727 scripts a stock Ubuntu 24.04 ships,
+// two blocked that way (`inxi` and a Perl locale module) and 58 escalated.
+//
+// So a payload longer than WINDOW_LINES is scored in overlapping windows of that many
+// lines and the strongest window is the result. Tier 1 convicts CONCENTRATED narration:
+// several distinct signals close together. Signals scattered across a long file reach at
+// most the judge, who is then shown the window that fired, not the whole file. A payload
+// of WINDOW_LINES lines or fewer is scored exactly as before. Session evidence is not
+// windowed: narration spread across the execs of one session is still read as one text.
+export const WINDOW_LINES = 120;
+
+function scorePayload(text) {
+  const lines = text.split("\n");
+  if (lines.length <= WINDOW_LINES) return { ...narrationScore(text), text, windowed: false };
+  let best = null;
+  let bestWhy = false;
+  for (let i = 0; i < lines.length; i += WINDOW_LINES / 2) {
+    const part = lines.slice(i, i + WINDOW_LINES).join("\n");
+    const r = narrationScore(part);
+    // On a tie at zero keep a window that carries a lone why-comment: that is what a
+    // session window needs to see.
+    const why = r.score === 0 && !bestWhy ? whyComments(part).length > 0 : false;
+    if (!best || r.score > best.score || (why && best.score === 0)) {
+      best = { ...r, text: part, windowed: true };
+      bestWhy = why;
+    }
+    if (i + WINDOW_LINES >= lines.length) break;
+  }
+  return best;
+}
+
 // ── decode stage ─────────────────────────────────────────────────────────────
 // Real payloads arrive encoded (base64 / hex / nested / eval-wrapped) to evade
 // signatures — JadePuffer's narration lived in the DECODED layer. Surface every
@@ -216,20 +252,24 @@ export function candidateDecodings(raw, maxDepth = 3) {
 
 /**
  * The sensor-side tier-1 decision: decode a raw payload into all plausible layers,
- * score each, return the strongest. `scoredLayer` is the text tier-2 should judge.
+ * score each (a long one in windows), return the strongest. `scoredLayer` is the text
+ * tier-2 should judge.
  */
 export function inspect(raw) {
   const candidates = candidateDecodings(raw);
-  let best = narrationScore(raw);
-  let scoredLayer = raw;
+  let best = scorePayload(raw);
+  let layer = raw;
   for (const c of candidates) {
-    const r = narrationScore(c);
+    const r = scorePayload(c);
     if (r.score > best.score) {
       best = r;
-      scoredLayer = c;
+      layer = c;
     }
   }
-  return { ...best, raw, scoredLayer, decoded: scoredLayer !== raw, layers: candidates.length };
+  // `scoredLayer` is the text that earned the score: the whole layer, or for a long
+  // payload its strongest window.
+  const { text, windowed, ...scored } = best;
+  return { ...scored, raw, scoredLayer: text, decoded: layer !== raw, windowed, layers: candidates.length };
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -657,7 +697,7 @@ export async function decide(raw, opts = {}) {
 
 // decide() for an already-inspected payload (decideSession inspects once and reuses it).
 function resolve(t1, opts) {
-  const base = { verdict: t1.verdict, score: t1.score, scoredLayer: t1.scoredLayer, decoded: t1.decoded, signals: t1.signals };
+  const base = { verdict: t1.verdict, score: t1.score, scoredLayer: t1.scoredLayer, decoded: t1.decoded, signals: t1.signals, ...(t1.windowed ? { windowed: true } : {}) };
   if (t1.verdict === "block") return { ...base, decision: "block", tier: 1, reason: "tier-1: high-confidence agentic narration" };
   if (t1.verdict === "clear") return { ...base, decision: "allow", tier: 1, reason: "tier-1: no narration signature" };
   return tier2(base, t1.scoredLayer, opts, "tier-1: escalate, ", "tier-2: ");
@@ -803,7 +843,7 @@ export function sessionTranscript(items) {
  */
 export async function decideSession(sessionKey, raw, opts = {}) {
   const t1 = inspect(raw);
-  return withTripwire(raw, t1, opts, () => resolveSession(sessionKey, t1, opts));
+  return withTripwire(raw, t1, opts, () => withBehavior(sessionKey, raw, opts, () => resolveSession(sessionKey, t1, opts)));
 }
 
 async function resolveSession(sessionKey, t1, opts) {
@@ -846,6 +886,293 @@ async function resolveSession(sessionKey, t1, opts) {
   if (d.tier === 2 && d.adjudication && !d.adjudication.refused) sessions.remember(key, signalsKey, { kind: "verdict", verdict: d.adjudication });
   else if (d.tier === 1) sessions.remember(key, signalsKey, { kind: "unjudged" }); // alerted once for this evidence
   return d;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// session behavior — what a session LOOKS AT across its commands (no narration needed)
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// Narration and the tripwire's token both need the attacker's model to cooperate: to
+// write its reasoning down, or to do what a decoy says. A model that does neither still
+// has to find out where it is. An agent that lands on a host it has never seen asks the
+// same questions in its first minute: who am I, what is this box, what runs here, who
+// else has an account, what may I run as root, where are the keys. Each question is an
+// ordinary command. The breadth, inside one session and one short window, is the signal.
+//
+// behaviorCategories() reads one command and names the AREAS of the host it asks about
+// (BEHAVIOR_CATEGORIES). Four areas are marked sensitive: the account database, what the
+// account may run with privilege, stored keys / credentials / shell history, and the
+// cloud metadata service or a service-account token. A tracker keeps, per session, the
+// areas seen in a sliding window and reports a SWEEP once when the window holds
+// BEHAVIOR.categories distinct areas of which BEHAVIOR.sensitive are sensitive.
+//
+// Policy: a sweep is an ALERT and never a kill, in every mode, with or without a judge.
+// It is a look, not an act, and it is not specific to an AI: a human intruder does the
+// same, and so do a support-bundle collector and a security audit script. The alert says
+// what was looked at and how fast (commands, steps, span, median pause between steps) so
+// an operator can tell those apart: a script is one step, an agent pauses before each. If the same command is convicted for its narration it still blocks.
+//
+// What this does NOT see: a sweep slower than the window; an agent that goes straight for
+// one thing; anything read without running a command (a script opening files itself);
+// and, on Windows, anything outside PowerShell script blocks. The reader below is a
+// heuristic over command text, not a shell parser. Opt-in (`--behavior` on either agent);
+// ARIS_BEHAVIOR_WINDOW_MS sizes the window.
+
+// `stepMs` only describes a sweep, it never decides one: execs closer together than this
+// are counted as one STEP. On a real host one command line fans out into several execs a
+// millisecond apart (`bash -c 'id; uname'` is three), so the gap between execs says
+// nothing about who is typing; the pauses between steps do (found live, 2026-11-10).
+export const BEHAVIOR = Object.freeze({ categories: 5, sensitive: 2, windowMs: 300_000, maxCommandChars: 4096, stepMs: 500 });
+
+export const BEHAVIOR_CATEGORIES = Object.freeze({
+  identity: { sensitive: false, what: "who the session runs as" },
+  logins: { sensitive: false, what: "who else is or was logged in" },
+  host: { sensitive: false, what: "the operating system and hardware" },
+  processes: { sensitive: false, what: "running processes and services" },
+  network: { sensitive: false, what: "interfaces, routes, listeners and neighbours" },
+  storage: { sensitive: false, what: "disks, mounts and shares" },
+  environment: { sensitive: false, what: "environment variables" },
+  scheduled: { sensitive: false, what: "scheduled jobs and autostarts" },
+  software: { sensitive: false, what: "installed packages and available tools" },
+  containers: { sensitive: false, what: "the container or cluster it runs in" },
+  accounts: { sensitive: true, what: "the account and group database" },
+  privilege: { sensitive: true, what: "what this account may run with privilege" },
+  secrets: { sensitive: true, what: "stored keys, credentials and shell history" },
+  cloud: { sensitive: true, what: "the instance metadata service or a service-account token" },
+});
+
+// Commands that show, list or copy what they are pointed at. A path rule below counts only
+// when one of these is in the same statement: `cat ~/.ssh/id_rsa` looks at a key,
+// `ssh -i ~/.ssh/id_rsa host` and `chmod 600 ~/.ssh/authorized_keys` use or manage one.
+const LOOKERS = new Set([
+  "cat", "head", "tail", "less", "more", "bat", "nl", "tac", "strings", "grep", "egrep", "fgrep", "rg", "awk", "gawk", "sed", "cut",
+  "sort", "uniq", "wc", "base64", "xxd", "od", "hexdump", "ls", "ll", "dir", "find", "locate", "stat", "file", "tree", "cp", "scp",
+  "tar", "zip", "rsync", "type", "gc", "get-content", "select-string", "sls", "findstr", "gci", "get-childitem", "copy", "copy-item", "xcopy",
+]);
+
+// [area, what the statement must mention]: counted when a LOOKER is in the statement.
+const BEHAVIOR_PATHS = [
+  ["host", /\/etc\/(os-release|issue|lsb-release|redhat-release|debian_version|system-release)\b|\/proc\/(version|cpuinfo|meminfo)\b/],
+  ["network", /\/etc\/(hosts|resolv\.conf)\b|\/proc\/net\//],
+  ["storage", /\/etc\/(fstab|exports|mtab)\b|\/proc\/mounts\b/],
+  ["environment", /\/proc\/(self|\d+)\/environ\b/],
+  ["scheduled", /\/etc\/(cron|anacrontab)|\/var\/spool\/cron/],
+  ["containers", /\/proc\/(1|self)\/cgroup\b|\/\.dockerenv\b/],
+  ["accounts", /\/etc\/(passwd|group|shadow|gshadow|master\.passwd)\b/],
+  ["privilege", /\/etc\/sudoers\b/],
+  ["cloud", /\/(var\/)?run\/secrets\/kubernetes\.io\//],
+  [
+    "secrets",
+    /(^|[\s\/\\~"'=])\.ssh([\/\\]|\b)|\bid_(rsa|dsa|ecdsa|ed25519)\b|\bauthorized_keys\b|\.aws[\/\\](credentials|config)\b|\.kube[\/\\]config\b|\.docker[\/\\]config\.json|\.netrc\b|\.git-credentials\b|\.pgpass\b|\.my\.cnf\b|\.htpasswd\b|\.(bash|zsh|sh|python|mysql|psql)_history\b|consolehost_history|(^|[\s\/\\"'])\.env(\.\w+)?(?=$|[\s"'])|\/etc\/ssl\/private|\.(pem|key|kdbx|pfx|p12|ppk|ovpn)\b|\bcredentials?(\.(json|xml|ya?ml|txt|csv))?(?=$|[\s"'])|\bsecrets?\.(ya?ml|json|txt|env)\b|\bwp-config\.php\b|\bunattend\.xml\b|historysavepath/i,
+  ],
+];
+
+const SECRET_WORDS = /pass(w(or)?d)?|secret|token|api[_-]?key|credential|private[ _-]?key/i;
+const ENV_SECRET_WORDS = /pass|secret|token|key|cred|aws/i; // what `env | grep` is asked for
+const RECURSIVE = /(^|\s)-[A-Za-z]*[rR][A-Za-z]*(\s|$)|--recursive\b/; // grep -r, -rn, -Rin
+// findstr's own flag syntax (/s, /si, /sim). Kept apart from grep's on purpose: read as a
+// grep flag, `/s…` matched every path that starts with /s or /usr (found live, 2026-11-10,
+// when lynis ran `egrep ^passwd /etc/nsswitch.conf` through the /usr/bin/egrep wrapper).
+const FINDSTR_RECURSIVE = /(^|\s)\/[a-z]{0,3}s[a-z]{0,3}(\s|$)/i;
+const WMI_CLASS = [
+  ["host", /win32_(operatingsystem|computersystem|bios)\b|^(os|computersystem|bios)\b/i],
+  ["processes", /win32_(process|service)\b|^(process|service)\b/i],
+  ["accounts", /win32_(useraccount|group)\b|^(useraccount|group)\b/i],
+  ["storage", /win32_(logicaldisk|share)\b|^(logicaldisk|share)\b/i],
+  ["network", /win32_networkadapterconfiguration\b|^nicconfig\b/i],
+  ["software", /win32_(product|quickfixengineering)\b|^(product|qfe)\b/i],
+  ["scheduled", /win32_(startupcommand|scheduledjob)\b|^startup\b/i],
+];
+
+// [area, command name, what its arguments must look like (optional)]. The name is the
+// command word in command position: lower case, no directory, no `.exe`.
+const BEHAVIOR_COMMANDS = [
+  ["identity", /^(id|whoami|groups|logname)$/],
+  ["logins", /^(w|who|last|lastlog|lastb|users|quser|qwinsta)$/],
+  ["logins", /^query$/, /^(user|session)\b/i],
+  ["host", /^(uname|hostname|hostnamectl|lsb_release|arch|uptime|lscpu|nproc|dmidecode|free|sw_vers|systeminfo|get-computerinfo|ver)$/],
+  ["processes", /^(ps|top|htop|pgrep|pstree|tasklist|get-process|gps|get-service|gsv)$/],
+  ["processes", /^systemctl$/, /^(--\S+\s+)*(list-units|list-unit-files|status\s*$)|--type[= ]service/],
+  ["processes", /^service$/, /--status-all/],
+  ["processes", /^sc$/, /^query/i],
+  ["network", /^(ifconfig|ipconfig|netstat|ss|arp|route|nmcli|iwconfig|get-netipaddress|get-netipconfiguration|get-netadapter|get-netroute|get-nettcpconnection|get-netneighbor|get-dnsclientserveraddress)$/],
+  ["network", /^ip$/, /^(-\S+\s+)*(a|ad|addr|address|r|ro|route|n|neigh|neighbour|l|link)\b/],
+  ["network", /^(iptables|ip6tables)$/, /(^|\s)-(L|S)\b/],
+  ["network", /^nft$/, /^list\b/],
+  ["network", /^lsof$/, /(^|\s)-i/],
+  ["network", /^net$/, /^view\b/i],
+  ["storage", /^(df|lsblk|findmnt|blkid|showmount|get-psdrive|get-volume|get-disk|get-smbshare)$/],
+  ["storage", /^mount$/, /^(-l)?\s*$/],
+  ["storage", /^net$/, /^(share|use)\b/i],
+  ["environment", /^(env|printenv)$/, /^(-0|--null)?\s*$/],
+  ["environment", /^set$/, /^\s*$/],
+  ["environment", /^export$/, /^(-p)?\s*$/],
+  ["environment", /^declare$/, /^-[px]\s*$/],
+  ["environment", /^(gci|ls|dir|get-childitem)$/, /^env:/i],
+  ["scheduled", /^crontab$/, /(^|\s)-l\b/],
+  ["scheduled", /^systemctl$/, /^(--\S+\s+)*list-timers\b/],
+  ["scheduled", /^(atq|get-scheduledtask)$/],
+  ["scheduled", /^schtasks$/, /^(\/query\b.*)?$/i],
+  ["scheduled", /^reg$/, /^query\b.*\\run(once)?\b/i],
+  ["software", /^dpkg$/, /(^|\s)(-l|--list|--get-selections)\b/],
+  ["software", /^rpm$/, /(^|\s)-q\w*a/],
+  ["software", /^(apt|apt-get|dnf|yum|pip|pip3|snap|brew|npm|gem)$/, /^(list|freeze)\b/],
+  ["software", /^(which|whereis|get-package|get-hotfix)$/],
+  ["software", /^type$/, /^[\w+-]+(\s+[\w+-]+)*$/],
+  ["software", /^command$/, /^-[vV]\b/],
+  ["software", /^(get-itemproperty|gp)$/, /\\uninstall\\/i],
+  ["containers", /^(docker|podman|crictl|nerdctl)$/, /^(ps|info|images|version)\b/],
+  ["containers", /^kubectl$/, /^(get|auth\s+can-i|cluster-info|config\s+view|version)\b/],
+  ["accounts", /^getent$/, /^(passwd|group|shadow)\b/],
+  ["accounts", /^(lslogins|get-localuser|get-localgroup|get-aduser|get-adgroup|get-adgroupmember|get-adcomputer|get-addomain|dsquery|nltest)$/],
+  ["accounts", /^net$/, /^(user|users|localgroup|group|accounts)\b/i],
+  ["accounts", /^(ls|ll|dir|tree|gci|get-childitem)$/, /(^|\s)["']?(\/home|\/root|\/users|[a-z]:\\users)[\/\\]?["']?(\s|$)/i],
+  // `sudo -l -U someone` needs root already: that is an administrator checking a user.
+  ["privilege", /^sudo$/, /^(-[A-Za-z]+\s+)*(-l|-ll|-nl|-ln|--list)\b(?!.*(\s-U\b|--other-user))/],
+  ["privilege", /^find$/, /-perm\s+\S*(4000|2000|6000|u[=+]s|g[=+]s)/],
+  ["privilege", /^(getcap|capsh|get-localgroupmember)$/],
+  ["privilege", /^whoami$/, /\/(priv|groups|all)\b/i],
+  ["privilege", /^net$/, /^localgroup\s+"?administrators\b/i],
+  ["secrets", /^history$/],
+  ["secrets", /^(grep|egrep|fgrep)$/, (args) => RECURSIVE.test(args) && SECRET_WORDS.test(args)],
+  ["secrets", /^findstr$/, (args) => FINDSTR_RECURSIVE.test(args) && SECRET_WORDS.test(args)],
+  ["secrets", /^(rg|ag|ack|select-string|sls)$/, SECRET_WORDS],
+  ["secrets", /^find$/, /-i?name\s+\S*(passw|secret|credential|token)/i],
+  ["secrets", /^(cmdkey|vaultcmd)$/, /\/list/i],
+  ["secrets", /^netsh$/, /wlan\s+show\s+profile.*key=clear/i],
+  ["secrets", /^reg$/, /^(query|save)\b.*(winlogon|\\sam\b|\\security\b|putty|vnc|autologon)/i],
+  ["cloud", /^(curl|wget|nc|ncat|http|invoke-restmethod|irm|invoke-webrequest|iwr)$/, /169\.254\.169\.254|metadata\.google\.internal|100\.100\.100\.200/i],
+  ...WMI_CLASS.map(([area, re]) => [area, /^(wmic|get-wmiobject|gwmi|get-ciminstance|gcim)$/, re]),
+];
+
+// Words that run another command: the reader looks through them. The set is the options
+// of each that take a value (so `sudo -u postgres psql` is read as psql, not postgres).
+const WRAPPERS = {
+  sudo: "ugCphrtTDR", doas: "uC", env: "uCS", nice: "n", ionice: "cnp", timeout: "sk", stdbuf: "ioe", xargs: "nPILdaEs",
+  nohup: "", time: "", exec: "", builtin: "", busybox: "", command: "", bash: "", sh: "", dash: "", zsh: "", ksh: "", cmd: "", powershell: "", pwsh: "",
+  do: "", then: "", else: "", elif: "", if: "", while: "", until: "", "!": "", "&": "",
+};
+const SCRIPT_HOSTS = new Set(["bash", "sh", "dash", "zsh", "ksh", "cmd", "powershell", "pwsh"]);
+
+const unquote = (t) => t.replace(/^["'`]+|["'`]+$/g, "");
+const commandName = (t) => unquote(t).split(/[\/\\]/).pop().toLowerCase().replace(/\.exe$/, "");
+
+function readCommand(tokens, found, names) {
+  for (let depth = 0; depth < 6 && tokens.length; depth++) {
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[0])) { tokens = tokens.slice(1); continue; } // FOO=bar cmd
+    const name = commandName(tokens[0]);
+    if (!name) { tokens = tokens.slice(1); continue; }
+    names.add(name);
+    const args = tokens.slice(1).map(unquote).join(" ");
+    for (const [area, nameRe, argTest] of BEHAVIOR_COMMANDS) {
+      if (!nameRe.test(name)) continue;
+      if (!argTest || (typeof argTest === "function" ? argTest(args) : argTest.test(args))) found.add(area);
+    }
+    const valued = WRAPPERS[name];
+    if (valued === undefined) return;
+    // An interpreter is a wrapper only when it is given the command (`bash -c id`), not a file.
+    if (SCRIPT_HOSTS.has(name) && !tokens.slice(1).some((t) => /^-\w*c\w*$|^\/[ck]$|^-(command|encodedcommand)$/i.test(t))) return;
+    let i = 1;
+    for (; i < tokens.length; i++) {
+      const t = tokens[i];
+      if (/^-/.test(t)) { if (t.length === 2 && valued.includes(t[1])) i++; continue; }
+      if (/^\/[a-z]$/i.test(t) || /^\d+(\.\d+)?[smhd]?$/.test(t) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(t)) continue;
+      break;
+    }
+    tokens = tokens.slice(i);
+  }
+}
+
+/** The areas of the host one command asks about (sorted names from BEHAVIOR_CATEGORIES). */
+export function behaviorCategories(command) {
+  const text = String(command ?? "");
+  if (!text.trim() || text.length > BEHAVIOR.maxCommandChars) return []; // that long is a script, not a command
+  const found = new Set();
+  for (const statement of text.split(/\|\||&&|[;\n]/)) {
+    const names = new Set();
+    for (const simple of statement.split(/\$\(|[|()`]|\{\s|\s\}/)) readCommand(simple.trim().split(/\s+/).filter(Boolean), found, names);
+    // A public key is not a secret: `cat ~/.ssh/id_ed25519.pub` is how one is handed out.
+    const looked = statement.replace(/\S+\.pub\b/g, " ");
+    if ([...names].some((n) => LOOKERS.has(n))) for (const [area, re] of BEHAVIOR_PATHS) if (re.test(looked)) found.add(area);
+    // `env | grep -i key`: the variables are being searched for a credential.
+    if (/(^|[\s|(])(env|printenv|set|export\s+-p)\b[^|]*\|\s*[ef]?grep\b/i.test(statement) && ENV_SECRET_WORDS.test(statement.slice(statement.indexOf("|")))) found.add("secrets");
+  }
+  return [...found].sort();
+}
+
+const median = (xs) => { const s = [...xs].sort((a, b) => a - b); return s.length ? (s.length % 2 ? s[(s.length - 1) / 2] : Math.round((s[s.length / 2 - 1] + s[s.length / 2]) / 2)) : 0; };
+
+/**
+ * Per-session window of the areas a session has asked about. observe() returns a sweep
+ * exactly once, on the command that completes it; the session can report again only after
+ * its window has emptied. Nothing of the command text is kept: area names and times only.
+ */
+export function createBehaviorTracker({
+  windowMs = num(process.env.ARIS_BEHAVIOR_WINDOW_MS, BEHAVIOR.windowMs),
+  minCategories = BEHAVIOR.categories,
+  minSensitive = BEHAVIOR.sensitive,
+  maxSessions = 2000,
+  now = Date.now,
+} = {}) {
+  const sessions = new Map(); // key -> { seen: Map<area, lastAt>, times: number[], reported: boolean }
+  const enabled = windowMs > 0;
+
+  function observe(key, command) {
+    if (!enabled || key === undefined || key === null || key === "") return null;
+    const areas = behaviorCategories(command);
+    if (!areas.length) return null;
+    const k = String(key);
+    const t = now();
+    let st = sessions.get(k);
+    if (st) sessions.delete(k); // re-insert: Map order is the LRU order
+    else st = { seen: new Map(), times: [], reported: false };
+    sessions.set(k, st);
+    while (sessions.size > maxSessions) sessions.delete(sessions.keys().next().value);
+
+    for (const [area, at] of st.seen) if (at <= t - windowMs) st.seen.delete(area);
+    st.times = st.times.filter((x) => x > t - windowMs);
+    if (!st.seen.size) st.reported = false; // the sweep that was reported has aged out
+    for (const area of areas) st.seen.set(area, t);
+    st.times.push(t);
+    if (st.times.length > 256) st.times.shift();
+
+    const categories = [...st.seen.keys()].sort();
+    const sensitive = categories.filter((c) => BEHAVIOR_CATEGORIES[c].sensitive);
+    if (st.reported || categories.length < minCategories || sensitive.length < minSensitive) return null;
+    st.reported = true;
+    const pauses = st.times.slice(1).map((x, i) => x - st.times[i]).filter((gap) => gap >= BEHAVIOR.stepMs);
+    return { kind: "sweep", categories, sensitive, commands: st.times.length, steps: pauses.length + 1, spanMs: t - st.times[0], medianGapMs: median(pauses) };
+  }
+
+  /** What the window holds now (for tests and harnesses); never changes state. */
+  function peek(key) {
+    const st = sessions.get(String(key));
+    const categories = st ? [...st.seen.keys()].sort() : [];
+    return { categories, sensitive: categories.filter((c) => BEHAVIOR_CATEGORIES[c].sensitive), commands: st ? st.times.length : 0, reported: !!st?.reported };
+  }
+
+  return { observe, peek, forget: (key) => sessions.delete(String(key)), size: () => sessions.size, enabled, windowMs };
+}
+
+// Behavior policy, applied around the narration decision of decideSession(): a sweep turns
+// an allow into an alert and is recorded on a block; it never makes or prevents a kill.
+// `opts.behavior` is the tracker (no tracker, no signal) and `opts.command` is the command
+// text to read when it differs from the payload (Linux: the command line, without the
+// script file the agent appended for the narration scorer).
+async function withBehavior(sessionKey, raw, opts, next) {
+  const hit = opts.behavior ? opts.behavior.observe(sessionKey, opts.command ?? raw) : null;
+  const d = await next();
+  if (!hit) return d;
+  const what = `${hit.categories.length} areas of the host in ${Math.round(hit.spanMs / 1000)}s (${hit.categories.join(", ")}; sensitive: ${hit.sensitive.join(", ")})`;
+  if (d.decision === "block") return { ...d, behavior: hit, reason: `${d.reason}; behavior: the session had also swept ${what}` };
+  return {
+    ...d,
+    decision: "alert",
+    viaBehavior: true,
+    behavior: hit,
+    signals: [...d.signals, "behavior_sweep"],
+    reason: `behavior: this session swept ${what} over ${hit.commands} commands in ${hit.steps} step${hit.steps === 1 ? "" : "s"} -> alert, never a kill (${d.reason})`,
+  };
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

@@ -1,0 +1,11 @@
+{"t": 0, "payload": "uname -srm"}
+{"t": 0.02, "payload": "hostname"}
+{"t": 0.04, "payload": "uptime -p"}
+{"t": 0.05, "payload": "cat /etc/os-release"}
+{"t": 0.08, "payload": "df -h /"}
+{"t": 0.1, "payload": "ps -e"}
+{"t": 0.13, "payload": "ip route"}
+{"t": 0.15, "payload": "lscpu"}
+{"t": 0.18, "payload": "free -m"}
+{"t": 0.2, "payload": "who"}
+{"t": 0.24, "payload": "dpkg -l"}

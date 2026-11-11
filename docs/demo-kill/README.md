@@ -107,6 +107,64 @@ next command must not run" it failed 24/26, for two reasons that both needed fix
    the waiting shell go. The session kill now runs before the offender is killed (see the
    session-kill section above; the same fix, the same bug).
 
+## Live validation of session behavior
+
+`validate-behavior.sh` does the same for `--behavior`. It arms the agent fully
+(`--enforce --kill-session --behavior`, no judge) so that "a sweep never kills" is checked
+where a kill was possible, shortens the window to 20 seconds, and runs eight scenarios in
+29 checks: a silent sweep of six questions two seconds apart (one alert, on the command
+that completes it, nothing killed, the session runs on); the same questions chained three
+to a `bash -c`; a login triage that must stay quiet; a script whose *text* holds a whole
+sweep that never runs; a collector that reads everything back to back (reported: the
+known false positive); half a sweep in each of two sessions; a sweep followed by a
+narrated step (the sweep is an alert, the narrated step is a kill); and the first sweep
+again at one command every six seconds, slower than the window.
+
+```bash
+limactl shell aris-demo -- sudo bash /Volumes/ArisLLM/Projects-Archive/aris-sentinel/docs/demo-kill/validate-behavior.sh
+```
+
+**Run live on 2026-11-10: 29/29**, three times in a row on the final code (kernel 6.8.0-147, Falco 0.45.2,
+Node 18.19, 2 CPU / 4 GB). The first run passed as written (28/28) and its incident log
+still held a finding. The alert reported the median gap between commands, and for the
+chained sweep that gap was one millisecond: on a real host `bash -c 'id; uname -a'` is
+three execs a millisecond apart, so the gap between execs measures fan-out, not think
+time. The alert now groups execs less than half a second apart into one **step** and
+reports the steps and the pauses between them: six steps with two-second pauses for the
+paced sweep, three for the chained one, one for the collector. Check 12 pins that down.
+
+Two things Falco does that are worth knowing when you read an incident: a setuid program
+is reported under its effective user (`sudo -n -l` run by `nobody` shows `user=root`), and
+a `#!` script is reported as `<comm> <script path> <args>` with the comm cut to 15
+characters (`deb-systemd-hel /usr/bin/deb-systemd-helper enable cron.service`).
+
+## What real administration looks like to the agent
+
+Two more scripts, both measurements rather than pass/fail checks, both written because
+the sessions in `corpus/behavior/` are ours and a real box is not.
+
+```bash
+limactl shell aris-demo -- sudo bash /Volumes/ArisLLM/Projects-Archive/aris-sentinel/docs/demo-kill/soak-behavior.sh
+```
+
+`soak-behavior.sh` installs `ansible-core`, `sosreport`, `lynis` and `inxi`, arms the agent
+in monitor mode with `--behavior` and the default five-minute window, and runs fourteen
+ordinary activities with the distribution's own tools, each in a session of its own: apt
+update, install and upgrade check, the login banner, a login shell, `cron.daily`,
+`adduser`, a service restart, a disk triage, `inxi`, an ansible fact run,
+`unattended-upgrade --dry-run`, a lynis audit and a sos report. It prints what each
+session asked about and whether it was reported. Nobody here wrote those command lines.
+
+```bash
+limactl shell aris-demo -- sudo node /Volumes/ArisLLM/Projects-Archive/aris-sentinel/docs/demo-kill/scan-system-scripts.mjs
+```
+
+`scan-system-scripts.mjs` scores every `#!` file under `/usr`, `/etc` and `/usr/local` the
+way the agent scores a script on exec, and prints the tier-1 tally. None of those files is
+an attack, so a block is a false positive and an escalate is a judge call every time that
+script runs. It is read-only and runs on any Linux box with Node. The results of both, and
+the false block they found in tier 1, are in [corpus/README.md](../../corpus/README.md).
+
 ## 5. Tear down
 
 ```bash

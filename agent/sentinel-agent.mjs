@@ -17,6 +17,9 @@
 //                                             # agent to run one canary command; running it is
 //                                             # a conviction, looking at the decoy is an alert
 //   sudo node sentinel-agent.mjs --tripwire-remove   # take the decoys away again, then exit
+//   sudo node sentinel-agent.mjs --behavior   # (any mode) report a session that asks about many
+//                                             # areas of the host in a few minutes (who am I, what
+//                                             # runs here, the accounts, sudo rights): alert only
 //   node sentinel-agent.mjs --selftest        # score sample payloads, no Falco/root
 //
 //   env: ANTHROPIC_API_KEY (tier 2 on Claude), OPENAI_BASE_URL+OPENAI_MODEL (local judge),
@@ -27,6 +30,7 @@
 //        ARIS_FAIL_MODE=alert (page instead of block when tier-2 errors/refuses)
 //        ARIS_TRIPWIRE_STATE (where the tripwire token is kept, 0600)
 //        ARIS_TRIPWIRE_DIRS (comma-separated decoy directories)
+//        ARIS_BEHAVIOR_WINDOW_MS (the --behavior window, default 300000)
 //        ARIS_TIER2_TIMEOUT_MS / _DEADLINE_MS / _CACHE_TTL_MS / _CONCURRENCY / _BUDGET_PER_MIN
 //
 // Decisions (see sentinel-core.mjs):
@@ -38,6 +42,9 @@
 //   error → the detector threw: logged + reported as an incident, never dropped silently.
 //   With --tripwire: the canary command executed → block (the one conviction that needs no
 //   narration and no judge); the decoy merely addressed → alert.
+//   With --behavior: a session that asks about enough areas of the host inside one window
+//   (who am I, what runs here, the account database, what may I run as root…) → alert.
+//   A look, not an act: never a kill, in any mode.
 
 import { spawn } from "node:child_process";
 import { readFileSync, appendFileSync, readdirSync, statSync } from "node:fs";
@@ -45,7 +52,7 @@ import { basename, isAbsolute, resolve as resolvePath } from "node:path";
 import { hostname } from "node:os";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
-import { armTripwire, createTripwire, decide, decideSession, defaultSessions, disarmTripwire, hasTier2, newTripwireToken, providers, providerWarnings, tripwireDecoy } from "./sentinel-core.mjs";
+import { armTripwire, BEHAVIOR, behaviorCategories, createBehaviorTracker, createTripwire, decide, decideSession, defaultSessions, disarmTripwire, hasTier2, newTripwireToken, providers, providerWarnings, tripwireDecoy } from "./sentinel-core.mjs";
 
 // SAFE BY DEFAULT: the agent detects + alerts + logs but NEVER kills unless you pass
 // --enforce. A false positive can't take down a customer's prod on day one; you flip
@@ -68,6 +75,8 @@ const TRIPWIRE = process.argv.includes("--tripwire");
 const TRIPWIRE_REMOVE = process.argv.includes("--tripwire-remove");
 const TRIPWIRE_STATE = process.env.ARIS_TRIPWIRE_STATE || "/var/lib/aris-sentinel/tripwire.json";
 const TRIPWIRE_DIRS = (process.env.ARIS_TRIPWIRE_DIRS || "").split(",").map((s) => s.trim()).filter(Boolean);
+// BEHAVIOR: opt-in, any mode. A session that sweeps the host is reported, never killed.
+const BEHAVIOR_ON = process.argv.includes("--behavior");
 const SELFTEST = process.argv.includes("--selftest");
 const VERBOSE = process.env.ARIS_VERBOSE === "1";
 const FALCO_BIN = process.env.FALCO_BIN || "falco";
@@ -340,11 +349,11 @@ function respond(f, d, payload) {
   // `alert` is never a kill: tier 2 could not judge it, so we page a human instead.
   const guard = d.decision === "block" ? isProtected(p.pid, p.exe) : null;
   const action =
-    d.decision === "alert" ? (d.viaTripwire ? "ALERT (decoy addressed, not run — no kill)" : "ALERT (tier-2 unavailable — no kill)")
+    d.decision === "alert" ? (d.viaTripwire ? "ALERT (decoy addressed, not run — no kill)" : d.viaBehavior ? "ALERT (the session swept the host — no kill)" : "ALERT (tier-2 unavailable — no kill)")
     : !deps.mode.enforce ? "DETECTED (monitor — no kill)"
     : guard ? `SPARED (${guard})`
     : "KILL";
-  log(`SENTINEL ${action}  ${d.viaTripwire ? "tripwire" : `tier-${d.tier}`}  pid=${p.pid} ppid=${p.ppid} sid=${p.sid} user=${p.user} exe=${p.exe}${decoded}${sess}  score=${d.score.toFixed(2)}${how ? " " + how : ""}`);
+  log(`SENTINEL ${action}  ${d.viaTripwire ? "tripwire" : d.viaBehavior ? "behavior" : `tier-${d.tier}`}  pid=${p.pid} ppid=${p.ppid} sid=${p.sid} user=${p.user} exe=${p.exe}${decoded}${sess}  score=${d.score.toFixed(2)}${how ? " " + how : ""}`);
   log(`            cmd: ${(p.cmdline || "").slice(0, 200)}`);
   if (d.reason) log(`            ${d.reason}`);
   if (d.adjudication?.reasoning) log(`            reasoning: ${d.adjudication.reasoning}`);
@@ -355,10 +364,13 @@ function respond(f, d, payload) {
     ...p, score: d.score, signals: d.signals, reason: d.reason,
     conf: d.adjudication?.confidence ?? null, reasoning: d.adjudication?.reasoning ?? null,
     // When the session convicted, the evidence is the session's words, not this one exec's.
-    narration: clean(narrationSnippet(d.viaSession ? d.scoredLayer : payload)),
+    // And for a long script the evidence is the window that fired, not its licence header.
+    narration: clean(narrationSnippet(d.viaSession || d.windowed ? d.scoredLayer : payload)),
     via_session: !!d.viaSession, session: d.session ?? null,
     // kind "token": the canary command ran. kind "decoy": the decoy was addressed. Never the token itself.
     tripwire: d.tripwire ?? null,
+    // kind "sweep": which areas of the host the session asked about, and how fast. Area names only.
+    behavior: d.behavior ?? null,
   };
 
   // Egress the alert to Aris Cloud FIRST — before we touch the process.
@@ -475,10 +487,12 @@ export const sessionKeyOf = (f) => {
 
 // Injectable seams for tests (swap `deps.decide` to simulate a throwing detector).
 // `mode` is what the process was started with; the kill primitives are real /proc + SIGKILL.
-// `tripwire` is this host's matcher once main() has armed it (null otherwise).
+// `tripwire` is this host's matcher once main() has armed it (null otherwise); `behavior`
+// is the session-behavior tracker once main() has turned it on (null otherwise).
 export const deps = {
-  decide: (payload, sessionKey, ctx = {}) => decideSession(sessionKey, payload, { tripwire: deps.tripwire, cwd: ctx.cwd }),
+  decide: (payload, sessionKey, ctx = {}) => decideSession(sessionKey, payload, { tripwire: deps.tripwire, cwd: ctx.cwd, behavior: deps.behavior, command: ctx.command }),
   tripwire: null,
+  behavior: null,
   mode: { enforce: ENFORCE, killSession: ENFORCE && KILL_SESSION },
   killTree,
   sessionPids,
@@ -495,7 +509,9 @@ export async function handleEvent(f) {
   if (!pid || pid === OWN_PID) return;
   if (quarantine(f)) return; // a convicted session's next exec: stopped, not scored
   const payload = extractPayload(f);
-  if (payload.trim().length < 3) return;
+  // Too short to narrate anything. With --behavior on, `id` and `w` are exactly the
+  // commands a sweep is made of, so only an empty payload is skipped.
+  if (payload.trim().length < (deps.behavior ? 1 : 3)) return;
 
   // collapse duplicate execs of the same attack (same session + same payload) so we
   // adjudicate once. Set the key BEFORE awaiting so concurrent events don't race in.
@@ -506,9 +522,13 @@ export async function handleEvent(f) {
   if (decided.size > DEDUP_MAX) decided.delete(decided.keys().next().value);
 
   let d;
-  try { d = await deps.decide(payload, sessionKeyOf(f), { cwd: f["proc.cwd"] }); } catch (e) { return respondError(f, e, payload); }
+  // Behavior reads the command line alone: the script file appended for the narration
+  // scorer is text the session may never run, and its own commands arrive as their own execs.
+  try { d = await deps.decide(payload, sessionKeyOf(f), { cwd: f["proc.cwd"], command: f["proc.cmdline"] || "" }); } catch (e) { return respondError(f, e, payload); }
   if (d.decision === "block" || d.decision === "alert") return respond(f, d, payload);
-  if (VERBOSE) log(`allow  tier-${d.tier}  pid=${pid} exe=${basename(f["proc.exe"] || "")}  score=${d.score.toFixed(2)}  ${d.reason}`);
+  // With --behavior the verbose line also says which areas of the host the command asked
+  // about, so an operator can see what a session's window holds before it is ever reported.
+  if (VERBOSE) log(`allow  tier-${d.tier}  pid=${pid} sid=${f["proc.sid"]} exe=${basename(f["proc.exe"] || "")}  score=${d.score.toFixed(2)}${deps.behavior ? `  areas=[${behaviorCategories(f["proc.cmdline"] || "").join(",")}]` : ""}  ${d.reason}`);
   return d;
 }
 
@@ -532,6 +552,17 @@ async function selftest() {
     log(`[${d.decision.toUpperCase().padEnd(5)}] ${d.viaTripwire ? "tripwire" : `tier-${d.tier}`} score=${d.score.toFixed(2)}  ${s.name}`);
     log(`         signals=[${d.signals.join(", ")}]  ${d.reason}\n`);
   }
+  // Session behavior: one quiet session asks who it is, what the box is, what runs on it,
+  // who has an account and what it may run as root. No command narrates anything; the
+  // command that completes the sweep is the one reported.
+  const behavior = createBehaviorTracker();
+  const sweep = ["id", "uname -a", "ps aux", "ss -tlnp", "cat /etc/passwd", "sudo -n -l"];
+  for (const [i, cmdline] of sweep.entries()) {
+    const d = await decideSession("selftest", cmdline, { behavior });
+    const last = i === sweep.length - 1;
+    log(`[${d.decision.toUpperCase().padEnd(5)}] ${d.viaBehavior ? "behavior" : `tier-${d.tier}`} score=${d.score.toFixed(2)}  behavior: quiet sweep, command ${i + 1}/${sweep.length} \`${cmdline}\` (expect ${last ? "ALERT" : "allow"})`);
+    if (d.viaBehavior) log(`         signals=[${d.signals.join(", ")}]  ${d.reason}\n`);
+  }
   log("selftest done. Arm with: sudo node sentinel-agent.mjs");
 }
 
@@ -551,6 +582,11 @@ function main() {
     else log(`  tripwire: ON (${a.created ? "new token" : "existing token"} ${a.tripwire.fingerprint}; decoys: ${a.tripwire.dirs.join(", ") || "none"}) — canary command run -> block, decoy addressed -> alert`);
     for (const s of a.skipped) log(`  WARN tripwire: no decoy at ${s.dir} (${s.why})`);
   } else log(`  tripwire: off (pass --tripwire to plant decoys)`);
+  if (BEHAVIOR_ON) {
+    deps.behavior = createBehaviorTracker();
+    if (!deps.behavior.enabled) log(`  session behavior: OFF (--behavior was passed, but ARIS_BEHAVIOR_WINDOW_MS=0 turns it off)`);
+    else log(`  session behavior: ON (a session asking about ${BEHAVIOR.categories}+ areas of the host, ${BEHAVIOR.sensitive}+ of them sensitive, inside ${Math.round(deps.behavior.windowMs / 1000)}s -> alert, never a kill)`);
+  } else log(`  session behavior: off (pass --behavior to report sessions that sweep the host)`);
   log(`  cloud alerts: ${CLOUD_URL ? `-> ${CLOUD_URL} (Telegram via Aris Cloud)` : "disabled (set ARIS_CLOUD_URL)"}`);
   log(`  incidents -> ${INCIDENT_LOG}`);
 

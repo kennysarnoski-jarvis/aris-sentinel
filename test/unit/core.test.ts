@@ -2,6 +2,9 @@
 // order, the tier-2 governor (cache / dedup / concurrency / budget) and the
 // block / alert / allow decision policy. No network: fetch is stubbed.
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import * as core from "../../agent/sentinel-core.mjs";
 import {
   adjudicate,
   attempt,
@@ -482,5 +485,79 @@ describe("decide: policy", () => {
     const d = await decide(ESCALATE, { env: { KIMI_API_KEY: "k" }, fetch: abortingFetch, timeoutMs: 10, deadlineMs: 50, governor: fresh() });
     expect(d).toMatchObject({ decision: "block", tier: 2 });
     expect(d.reason).toContain("kimi=timeout");
+  });
+});
+
+describe("long payloads are scored in windows (found live: a stock system tool blocked at tier 1)", () => {
+  const POSITIVE = readFileSync(fileURLToPath(new URL("../../corpus/positives/jadepuffer_retry_fk_bypass.py", import.meta.url)), "utf8");
+  const filler = (n: number, tag = "x") => Array.from({ length: n }, (_, i) => `${tag}_${i} = compute(${i})`).join("\n");
+
+  test("a payload of WINDOW_LINES lines or fewer is scored exactly as before", () => {
+    const text = POSITIVE + "\n" + filler(core.WINDOW_LINES - POSITIVE.split("\n").length - 1);
+    expect(text.split("\n").length).toBeLessThanOrEqual(core.WINDOW_LINES);
+    const r = core.inspect(text);
+    expect(r.windowed).toBe(false);
+    expect(r.scoredLayer).toBe(text);
+    expect(r.score).toBe(core.narrationScore(text).score);
+  });
+
+  test("concentrated narration still blocks wherever it sits in a long file, and the window is the evidence", () => {
+    const alone = core.inspect(POSITIVE);
+    expect(alone.verdict).toBe("block");
+    for (const [before, after] of [[0, 900], [450, 450], [900, 0], [37, 1213]]) {
+      const text = [filler(before, "a"), POSITIVE, filler(after, "b")].filter(Boolean).join("\n");
+      const r = core.inspect(text);
+      expect(r, `${before}/${after}`).toMatchObject({ verdict: "block", windowed: true, decoded: false });
+      expect(r.score).toBe(alone.score);
+      expect(r.scoredLayer.split("\n").length).toBeLessThanOrEqual(core.WINDOW_LINES);
+      expect(r.scoredLayer).toContain(POSITIVE.trim().split("\n")[0]);
+    }
+  });
+
+  test("the same signals scattered across a long program do not add up to a tier-1 block", () => {
+    const stray = [
+      "# I've tried filtering these out but more keep appearing",
+      "# take the highest value for the crude logic here",
+      "# because else the exit code from the last command is taken",
+      "# to avoid a crash on upgrade, pre-heat the lazy modules",
+      "# so that the cache is warm before the first request",
+    ];
+    const whole = stray.join("\n");
+    expect(core.narrationScore(whole).verdict).toBe("block"); // side by side they are a block
+    const text = stray.map((line, i) => line + "\n" + filler(400, `m${i}`)).join("\n");
+    expect(core.narrationScore(text).verdict).toBe("block"); // and so is the long file, read as one text
+    const r = core.inspect(text);
+    expect(r.windowed).toBe(true);
+    expect(r.verdict).not.toBe("block");
+  });
+
+  test("a long payload hidden in base64 is windowed after decoding, and still marked decoded", () => {
+    const text = [filler(300, "a"), POSITIVE, filler(300, "b")].join("\n");
+    const r = core.inspect(`echo ${Buffer.from(text).toString("base64")} | base64 -d | python3`);
+    expect(r).toMatchObject({ verdict: "block", decoded: true, windowed: true });
+  });
+
+  test("a clear long payload keeps the window with a lone why-comment, for the session window", () => {
+    const text = filler(700, "a") + "\n# staged here so that the next step can pick it up\n" + filler(300, "b");
+    const r = core.inspect(text);
+    expect(r).toMatchObject({ verdict: "clear", windowed: true });
+    expect(core.bearsNarration(r.scoredLayer)).toBe(true);
+  });
+
+  test("decide() carries `windowed`, and the judge is shown the window, not the file", async () => {
+    let shown = "";
+    const stray = "# I've tried filtering these out but more keep appearing\n# because else the exit code is taken\n# so that it is warm";
+    const text = filler(500, "a") + "\n" + stray + "\n" + filler(500, "b");
+    const d = await core.decide(text, { adjudicator: async (p: string) => { shown = p; return { agentic: false, confidence: 0.9, reasoning: "[stub]" }; }, governor: core.createGovernor({ budgetPerMin: 0 }) });
+    expect(d).toMatchObject({ decision: "allow", tier: 2, windowed: true });
+    expect(shown.split("\n").length).toBeLessThanOrEqual(core.WINDOW_LINES);
+    expect(shown).toContain("I've tried filtering");
+    expect((await core.decide("ls -la")).windowed).toBeUndefined();
+  });
+
+  test("session evidence is not windowed: narration across execs is still read as one text", () => {
+    const text = ["# I'll check sudo first", filler(300), "# Step 2: the largest share goes first because it is the most valuable"].join("\n");
+    expect(core.narrationScore(text).signals.length).toBeGreaterThan(core.inspect(text).signals.length - 1);
+    expect(core.narrationScore(text).score).toBeGreaterThanOrEqual(core.inspect(text).score);
   });
 });

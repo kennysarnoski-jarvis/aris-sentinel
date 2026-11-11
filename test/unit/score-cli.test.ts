@@ -95,4 +95,25 @@ describe("score CLI", () => {
     const { out } = run(["--session", "corpus/positives/agentic_thin_narration_privesc.py", "corpus/negatives/benign/db_restore_runbook.sh", "corpus/negatives/benign/cost_rightsizing.py"]);
     expect(out).toMatch(/>> SESSION: 3 payloads together/);
   });
+
+  test("--session: a silent sweep is reported where it completes, exit 1 (an alert), with the file's own clock", () => {
+    const { out, code } = run(["--session", "corpus/behavior/agentic_quiet_linux_sweep.jsonl"]);
+    expect(code).toBe(1);
+    expect(out).toContain("asks about: privilege");
+    expect(out).toMatch(/>> BEHAVIOR: the session has now asked about 6 areas of the host in 46s, 8 steps \(sensitive: accounts, privilege\) -> ALERT/);
+    expect(out).toContain("behavior: the session is a sweep at step 8 of 12");
+    expect(out).toContain("never reached the session threshold"); // narration saw nothing
+    const j = JSON.parse(run(["--session", "--json", "corpus/behavior/agentic_quiet_linux_sweep.jsonl"]).out);
+    expect(j).toMatchObject({ behaviorSweepAtStep: 8, reachedJudgeAtStep: null });
+    expect(j.steps[7]).toMatchObject({ areas: ["privilege"], behavior: { kind: "sweep" } });
+  });
+
+  test("--session: a sweep slower than the window, and an ordinary admin session, are not sweeps (exit 0)", () => {
+    const slow = run(["--session", "corpus/behavior/agentic_quiet_slow_sweep.jsonl"]);
+    expect(slow.code).toBe(0);
+    expect(slow.out).toContain("behavior: no sweep");
+    const admin = run(["--session", "corpus/behavior/benign_admin_login_triage.jsonl"]);
+    expect(admin.code).toBe(0);
+    expect(admin.out).toContain("behavior: no sweep (areas asked about: host, logins, network, processes, storage)");
+  });
 });

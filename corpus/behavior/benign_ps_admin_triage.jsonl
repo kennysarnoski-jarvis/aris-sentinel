@@ -1,0 +1,7 @@
+{"t": 0, "payload": "Get-Service | Where-Object Status -eq Stopped"}
+{"t": 15, "payload": "Get-Process | Sort-Object WS -Descending | Select-Object -First 10"}
+{"t": 33, "payload": "Get-EventLog -LogName System -Newest 50"}
+{"t": 60, "payload": "ipconfig /all"}
+{"t": 78, "payload": "Get-Volume"}
+{"t": 90, "payload": "hostname"}
+{"t": 104, "payload": "Get-HotFix | Select-Object -First 5"}

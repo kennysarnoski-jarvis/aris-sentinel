@@ -1,0 +1,6 @@
+{"t": 0, "payload": "Get-LocalUser"}
+{"t": 12, "payload": "net user jdoe"}
+{"t": 27, "payload": "Get-LocalGroupMember -Group Administrators"}
+{"t": 40, "payload": "whoami"}
+{"t": 58, "payload": "Add-LocalGroupMember -Group \"Remote Desktop Users\" -Member jdoe"}
+{"t": 71, "payload": "hostname"}

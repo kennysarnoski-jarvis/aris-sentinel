@@ -54,6 +54,8 @@ never kills). Add `--enforce` to let it kill on detection — do that only once 
 it on that box. `--enforce --kill-session` additionally ends the offender's whole session
 (see Known limits before arming it). `--tripwire` works in any mode: it plants decoy
 directories and treats their canary command as a detection (see Tripwire below).
+`--behavior` also works in any mode: it reports a session that asks about many areas of
+the host in a few minutes, as an alert only (see Session behavior below).
 Sanity-check with no root/Falco: `node sentinel-agent.mjs --selftest`.
 
 Logs: `journalctl -u aris-agent -f`. Incidents: `/var/log/aris-incidents.jsonl`, one JSON
@@ -136,8 +138,69 @@ not: it plants a decoy and watches for the one command only the decoy asks for.
 - **Removal.** `node sentinel-agent.mjs --tripwire-remove` deletes the files it planted (a
   directory only if nothing else was put in it) and the state file. `uninstall.sh` does this.
 
+## Session behavior (`--behavior`, opt-in)
+The second signal that needs no narration, and the only one that needs nothing from the
+attacker's model except curiosity. An agent on a host it has never seen asks who it is,
+what the machine is, what runs on it, who has an account, what it may run as root and
+where the keys are. `--behavior` reads the command line of every exec, names the areas of
+the host each one asks about, and keeps them per session (`proc.sid`) for five minutes
+(`ARIS_BEHAVIOR_WINDOW_MS`).
+
+- **The rule.** One session, one window, **five areas of which two are sensitive**. The
+  ten ordinary areas: identity, logins, host, processes, network, storage, environment,
+  scheduled jobs, software, containers. The four sensitive ones: the account database,
+  what the account may run with privilege, stored keys / credentials / shell history, and
+  the cloud metadata service or a service-account token.
+- **What it does.** One `alert` incident per sweep, on the command that completes it:
+  `SENTINEL ALERT (the session swept the host — no kill)  behavior`, with
+  `behavior: { kind: "sweep", categories, sensitive, commands, spanMs, medianGapMs }` and
+  the signal `behavior_sweep`. The same session is not reported again until its window
+  has emptied. **It never kills and never quarantines**, under `--enforce` and
+  `--kill-session` too, and it never calls a judge.
+- **What trips it that is not an intruder.** Anything that reads the whole host on
+  purpose: a support-bundle collector, a security audit script (lynis and the like), an
+  administrator doing a privilege review by hand. A collector fires its commands back to
+  back (the sample in `corpus/behavior/` does twelve in two seconds); the alert carries the
+  number of steps and the median pause between them (execs under half a second apart are
+  one step). Timing is reported, not used to decide: a real `lynis` run pauses between its
+  commands about as long as a hosted model does.
+- **Measured on a real box (2026-11-10, `docs/demo-kill/soak-behavior.sh`).** Fourteen
+  activities with Ubuntu's own tools, each in its own session, agent in monitor mode: apt
+  update / install / upgrade check, the login banner, a login shell, `cron.daily`,
+  `adduser`, a service restart, a disk triage, `inxi`, an ansible fact run,
+  `unattended-upgrade --dry-run` and a `sos report` were **not** reported (13 of 13); a
+  `lynis` audit was. The sos report came closest (eight areas, one sensitive).
+  Ordinary work does not come close: a login triage (`w`, `df`, `ps`, `ss`), a CI
+  environment dump, a config-management fact run and a user onboarding all stay under the
+  rule in the corpus, mostly because they touch no second sensitive area.
+- **Your own AI agents.** Measured on 2026-11-10 with hosted Claude models in a simulated
+  shell: on three focused admin tasks, 0 of 36 completed trials were reported (no trial
+  asked about more than two areas). Asked to write a handover survey of the host, 15 of 15
+  were reported, usually at the fourth command, with a median 1.0 to 1.9 s between
+  commands. So an agent you run for narrow jobs stays quiet, and one you ask to audit the
+  box will page you, exactly as a human doing the audit by hand would.
+- **What it reads, and does not.** The command line only: a script file the interpreter
+  runs is not treated as a list of commands (its own commands arrive as their own execs).
+  Text longer than 4096 characters is a script, not a command, and is skipped. The reader
+  is a heuristic, not a shell parser. The tracker keeps area names and timestamps, never
+  the command text.
+- **What it misses.** A sweep slower than the window; an agent that goes straight for one
+  thing; a sweep that touches fewer than two sensitive areas; files read by a program
+  without running a command; a sweep spread across sessions (each `ssh host 'cmd'` is its
+  own session). `corpus/behavior/` keeps a sample of each of the first three as an
+  expected miss.
+- **Cost.** With `--behavior` every exec is read, including two-letter commands the
+  narration scorer skips. It is string work on one command line, no judge and no I/O.
+- **Validated live** in the demo VM: `docs/demo-kill/validate-behavior.sh`, 29/29 on three
+  consecutive runs of the final code on kernel 6.8 / Falco 0.45 (2026-11-10), fully armed
+  (`--enforce --kill-session --behavior`) so that "never a kill" was checked where a kill
+  was possible. Not yet run on a pilot host. The thresholds were chosen before the samples
+  were scored and nothing was tuned afterwards. Run it in monitor mode and read what it
+  reports before you rely on it. `ARIS_VERBOSE=1` adds `areas=[…]` to every allow line, so
+  you can see what a session's window holds before it is ever reported.
+
 ## Stealth / de-branding (install.sh)
-`sudo ./install.sh [name] [--enforce [--kill-session]] [--tripwire]` deploys under a GENERIC identity so on-box recon
+`sudo ./install.sh [name] [--enforce [--kill-session]] [--tripwire] [--behavior]` deploys under a GENERIC identity so on-box recon
 reveals no security tool — an autonomous attacker not trained to recognize Aris sees a
 boring `sys-telemetryd` daemon it can't confidently kill (and killing it is a tamper
 event the dead-man's switch catches). **Installs in MONITOR mode by default** (detect +
@@ -175,6 +238,17 @@ The agent never kills pid ≤ 1, its own ancestors, or a protected comm allowlis
 (no shelling out) to avoid exec feedback loops.
 
 ## Known limits / next
+- **System scripts and alert noise** (measured 2026-11-10): the agent reads the script an
+  interpreter runs, and distribution scripts have comments. Of the 1,727 `#!` scripts on a
+  stock Ubuntu 24.04, 40 land in the escalate band on a single signal
+  (`docs/demo-kill/scan-system-scripts.mjs` lists them for your box). With a judge each is
+  a judge call, cached for ten minutes. **Without a judge each is an alert every time it
+  runs**: one `apt-get install` raised six (`deb-systemd-helper`), the login banner one.
+  None is a kill. Until 2026-11-10 two of those scripts (`inxi` and a Perl module) were
+  tier-1 *blocks*, which `--enforce` would have killed; a payload longer than 120 lines is
+  now scored in windows, and the scan shows 0. If you run without a judge, expect this
+  noise and consider a local one; scoping the agent to files an intruder could have
+  written is not built.
 - **Scope**: v1 scores *every* exec's cmdline (+ script-file contents for interpreters,
   resolved against the process's own cwd via Falco's `%proc.cwd`). On a busy box that's
   a lot of scoring; production should scope to sensitive sinks. Tier-2 volume is already

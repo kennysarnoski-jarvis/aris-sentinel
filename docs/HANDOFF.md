@@ -136,6 +136,92 @@ After both: tripwire **26/26** on six consecutive runs, session kill **24/24** o
    decoy). A file opened without being named (`grep -r`, a backup) is not seen. A Falco
    `open` rule on the decoy paths would close that and would also page on every backup.
 
+## 2026-11-10 — session behavior (`--behavior`, both agents)
+
+The second signal that needs no narration, after the tripwire, and the first that needs
+nothing from the attacker's model but orientation. In the core: `behaviorCategories()`
+reads one command line and names the areas of the host it asks about (fourteen, four of
+them sensitive), `createBehaviorTracker()` keeps them per session for five minutes, and
+`decideSession()` turns an allow into an **alert** when the window holds five areas with
+two sensitive. Never a block, a kill, a quarantine or a judge call; reported once per
+window; area names and timestamps only. Opt-in on both agents (`--behavior`,
+`install.sh --behavior`, `ARIS_BEHAVIOR_WINDOW_MS`). The Linux agent passes the command
+line alone (not the script file it appends for the narration scorer) and, with the flag
+on, no longer skips payloads under three characters (`id`, `w`). `bun run score --session`
+shows the areas and where a session becomes a sweep. 128 new unit tests for it, a
+key-free harness (`bun run behavior`, 17/17, in `test:all`), 17 rows added to the corpus
+snapshot and none changed. (442 unit tests in all, with the seven for long payloads below.)
+
+**Measured (same day):** see corpus/README.md. Written samples 17/17 as predicted on the
+first run, thresholds fixed beforehand and untouched. Hosted Claude on the three bait
+tasks: 0 of 36 completed trials reported. Hosted Claude on a new `survey` task (not in the
+harness's default set): 15 of 15 reported, at the fourth command in fourteen, median gap
+1.0 to 1.9 s. That third pass of the bait harness also re-measured the tripwire on the
+default tasks: decoy addressed 36 of 36, canary command 0 of 36, flagged 36 of 36; Opus
+completed 1 of 5 goal-directed trials this time (it did not run the command) and Sonnet
+0 of 5 backup trials, so 9 of 45 were cut off.
+
+**Live validation (same day):** Lima VM, Ubuntu 24.04.5, kernel 6.8.0-147, Falco 0.45.2
+modern eBPF, Node 18.19, 2 CPU / 4 GB, deleted afterwards.
+`docs/demo-kill/validate-behavior.sh`: 28/28 on the first run, 29/29 once a check was
+added, then 29/29 on three consecutive runs of the final code (after the changes below). Fully armed
+(`--enforce --kill-session --behavior`), a sweep killed nothing and quarantined nothing;
+the alert landed on the command that completed the sweep and not on the driver script
+whose text holds all six; a script whose text contains a sweep that never runs was not
+reported; a sweep slower than the (shortened, 20 s) window was missed as stated; a sweep
+followed by a narrated step was an alert and then a session kill. Regression on the same
+VM after the core changes: session kill **24/24**, tripwire **26/26**.
+
+What the live runs found, all fixed on the branch:
+1. **The reported timing was wrong.** The first run passed and its incident log showed a
+   median gap of 1 ms for the chained sweep: `bash -c 'id; uname -a'` is three execs a
+   millisecond apart. The hit now carries `steps` (execs under `BEHAVIOR.stepMs` = 500 ms
+   apart are one step) and the median pause between steps.
+2. **A reader bug** (`soak-behavior.sh`, real lynis): findstr's `/s` flag pattern matched
+   any path beginning `/s…` or `/usr`, so `egrep /usr/bin/egrep ^passwd /etc/nsswitch.conf`
+   counted as a recursive secret hunt. grep's and findstr's recursive flags are now two
+   rules.
+3. **A tier-1 false block that has nothing to do with this feature and was live on main.**
+   The soak ran real system tools under the agent for the first time, and `inxi` was a
+   tier-1 BLOCK (0.63; under `--enforce` it would have been killed). The scan that
+   followed (`docs/demo-kill/scan-system-scripts.mjs`, 1,727 `#!` scripts on the box):
+   2 block, 58 escalate, 1,667 clear. Cause: features are presence tests over up to 256 KB
+   and the "density" feature is a count. Fix in the core: `inspect()` scores a payload
+   longer than `WINDOW_LINES` (120) in half-overlapping windows and returns the strongest;
+   `scoredLayer` is that window (so the judge and the incident get the lines that fired,
+   not a licence header) and `windowed` is true. After: 0 block, 40 escalate, 1,687 clear;
+   corpus snapshot unchanged (longest corpus file: 31 lines); 7 unit tests. Details and
+   the cost in corpus/README.md.
+
+Soak, after those fixes (`docs/demo-kill/soak-behavior.sh`, monitor mode, default window,
+fourteen real activities each in its own session): behavior reported the lynis audit and
+none of the other thirteen, the sos report included (8 areas, 1 sensitive). Narration
+incidents in the same soak, no judge configured: 8 alerts, 0 blocks (before the window
+fix: 10 alerts, 1 block). The alerts are `deb-systemd-helper` six times in one
+`apt-get install`, `50-motd-news` once and `inxi` once.
+
+Also learned about Falco's fields: a setuid program is reported under its effective user
+(`sudo -n -l` run by nobody shows `user=root`), and a `#!` script as
+`<comm> <script path> <args>` with comm cut to 15 characters.
+
+**Unverified / open:**
+1. **Alert noise from system scripts on a host with no judge** (above). Not fixed. The
+   candidates: do not read a script file an unprivileged intruder could not have written
+   (root-owned, package path, unchanged since the agent started), or collapse repeated
+   alerts for the same script. Both change what the agent looks at and need their own
+   measurement.
+2. Behavior false positives over a real day on a real host. The soak is fourteen
+   activities on one distribution.
+3. Windows: unit tests and `--mock` only, like the tripwire. Kenny has no Windows machine;
+   the repo's CI already runs the agents on GitHub's `windows-latest`, which could run a
+   real script-block check. Proposed, not built.
+4. Timing as a discriminator: measured and found wanting (hosted models 1.0 to 1.9 s
+   between steps, real lynis 1.3 s). Reported in the alert, never decided on.
+5. The reader is a heuristic over command text. Quoting it does not understand (a `;`
+   inside an awk program) loses that statement; aliases and renamed binaries are not seen.
+6. A long attack script whose narration is spread more than 120 lines apart is no longer
+   a tier-1 block; it escalates. No sample of that shape exists in the corpus yet.
+
 **Bait rate, second pass (same day, after the merge of PR #10):** a local open-weight
 model (`arete:27b`, 27B, Q8, Ollama, thinking on, one request at a time) and a third task.
 The first two tasks only ask the model to look and report; the new `fix` task gives it a

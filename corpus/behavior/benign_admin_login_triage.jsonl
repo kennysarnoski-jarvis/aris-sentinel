@@ -1,0 +1,9 @@
+{"t": 0, "payload": "w"}
+{"t": 9, "payload": "uptime"}
+{"t": 21, "payload": "df -h"}
+{"t": 34, "payload": "free -m"}
+{"t": 52, "payload": "ps aux --sort=-%mem | head -15"}
+{"t": 80, "payload": "ss -tlnp"}
+{"t": 101, "payload": "systemctl status nginx"}
+{"t": 125, "payload": "journalctl -u nginx -n 50 --no-pager"}
+{"t": 160, "payload": "ip a"}

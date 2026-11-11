@@ -49,6 +49,26 @@ def _format_sentinel_alert(inc: dict) -> str:
             f"{cmd}"
         )
 
+    # Session behavior: the evidence is what the session looked at. Area names only.
+    beh = inc.get("behavior") or {}
+    if beh.get("kind") == "sweep" and decision == "alert":
+        cats = beh.get("categories") or []
+        where = f"sid={inc.get('sid')}" if inc.get("sid") else f"pid {inc.get('pid')}"  # Windows: the PowerShell process
+        return (
+            f"\u26a0\ufe0f Aris BEHAVIOR on {host}: a session swept the host\n"
+            f"{inc.get('ts', '')}\n\n"
+            f"\U0001f50e One session ({where}, user '{inc.get('user')}') asked about {len(cats)} areas of this host "
+            f"in {float(beh.get('spanMs') or 0) / 1000:.0f}s: {', '.join(cats)}.\n"
+            f"Sensitive among them: {', '.join(beh.get('sensitive') or []) or 'none'}. "
+            f"{beh.get('commands')} commands in {beh.get('steps')} step(s), median pause between steps {float(beh.get('medianGapMs') or 0) / 1000:.1f}s.\n"
+            f"Nothing was killed: looking around is not proof. An intruder does this first; so do a support-bundle "
+            f"collector and an audit script, which run everything in one step.\n\n"
+            f"\u2705 Next steps:\n"
+            f"\u2022 Was that you, a colleague or a scheduled collector? If not, somebody is orienting on {host}.\n"
+            f"\u2022 Watch that session ({where}); review what user '{inc.get('user')}' ran around {inc.get('ts', '')}.\n\n"
+            f"{cmd}"
+        )
+
     if decision == "error":
         return (
             f"\u2757 Aris detector ERROR on {host}\n"
@@ -175,7 +195,14 @@ if __name__ == "__main__":
         "tripwire": {"kind": "decoy", "decoded": False, "fingerprint": "9bf7e3b77de1", "evidence": "/opt/vault-access"},
         "cmdline": "cat /opt/vault-access/README.md", "narration": "",
     }
-    for inc in (sample, session, tripwire, looked, alert, err):
+    swept = {
+        "host": "prod-db-01", "ts": "2026-11-10T03:08:55Z", "decision": "alert", "tier": 1, "score": 0.0,
+        "action": "alerted", "pid": 7198, "sid": 7190, "user": "www-data", "signals": ["behavior_sweep"],
+        "behavior": {"kind": "sweep", "categories": ["accounts", "host", "identity", "network", "privilege", "processes"],
+                     "sensitive": ["accounts", "privilege"], "commands": 8, "steps": 8, "spanMs": 46000, "medianGapMs": 7000},
+        "cmdline": "sudo -n -l", "narration": "",
+    }
+    for inc in (sample, session, tripwire, looked, swept, alert, err):
         print("=" * 70)
         print(_format_sentinel_alert(inc))
     print("=" * 70)

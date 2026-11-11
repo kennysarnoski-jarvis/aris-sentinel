@@ -10,7 +10,7 @@ import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inspect } from "../detector/inspect";
-import { bearsNarration, createSessionTracker, narrationScore, SESSION_THRESHOLD } from "../agent/sentinel-core.mjs";
+import { bearsNarration, behaviorCategories, createBehaviorTracker, createSessionTracker, narrationScore, SESSION_THRESHOLD } from "../agent/sentinel-core.mjs";
 import { SAMPLES } from "./fpSamples";
 
 export const SNAPSHOT_PATH = fileURLToPath(new URL("./corpus-snapshot.json", import.meta.url));
@@ -57,9 +57,33 @@ function sessionRow(payloads: string[]): SessionRow {
   return { steps, window: last, reachesJudgeAt };
 }
 
-/** Current verdicts, keyed by `corpus/<dir>/<file>`, `corpus/sessions/<file>` or `fpSamples/<name>`. */
-export function collect(): Record<string, Row | SessionRow> {
-  const out: Record<string, Row | SessionRow> = {};
+export interface BehaviorRow {
+  /** the areas of the host each command asks about ("-" = none) */
+  areas: string[];
+  /** 1-based command at which the session is reported as a sweep (null = never) */
+  sweepAt: number | null;
+}
+
+// The behavior half of decideSession(), replayed on the session's own clock.
+function behaviorRow(cmds: { t: number; payload: string }[]): BehaviorRow {
+  let clock = 0;
+  const tracker = createBehaviorTracker({ now: () => clock });
+  let sweepAt: number | null = null;
+  const areas = cmds.map((c, i) => {
+    clock = Math.round(c.t * 1000);
+    if (tracker.observe("s", c.payload) && sweepAt === null) sweepAt = i + 1;
+    return behaviorCategories(c.payload).join(",") || "-";
+  });
+  return { areas, sweepAt };
+}
+
+/** Current verdicts, keyed by `corpus/<dir>/<file>`, `corpus/sessions/<file>`, `corpus/behavior/<file>` or `fpSamples/<name>`. */
+export function collect(): Record<string, Row | SessionRow | BehaviorRow> {
+  const out: Record<string, Row | SessionRow | BehaviorRow> = {};
+  const BEH = join(CORPUS, "behavior");
+  for (const f of readdirSync(BEH).filter((x) => x.endsWith(".jsonl")).sort()) {
+    out[`corpus/behavior/${f}`] = behaviorRow(readFileSync(join(BEH, f), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)));
+  }
   const SESS = join(CORPUS, "sessions");
   for (const f of readdirSync(SESS).filter((x) => x.endsWith(".jsonl")).sort()) {
     out[`corpus/sessions/${f}`] = sessionRow(readFileSync(join(SESS, f), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l).payload));
@@ -71,7 +95,7 @@ export function collect(): Record<string, Row | SessionRow> {
   return out;
 }
 
-export function load(): Record<string, Row | SessionRow> {
+export function load(): Record<string, Row | SessionRow | BehaviorRow> {
   return JSON.parse(readFileSync(SNAPSHOT_PATH, "utf8"));
 }
 

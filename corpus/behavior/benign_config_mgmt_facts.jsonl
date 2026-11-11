@@ -1,0 +1,9 @@
+{"t": 0, "payload": "/bin/sh -c echo ~deploy && sleep 0"}
+{"t": 0.3, "payload": "/usr/bin/python3 /home/deploy/.ansible/tmp/ansible-tmp-1/AnsiballZ_setup.py"}
+{"t": 0.5, "payload": "lsblk --list --noheadings --paths --output NAME,UUID"}
+{"t": 0.6, "payload": "findmnt --list --noheadings --notruncate"}
+{"t": 0.7, "payload": "ip -4 route get 203.0.113.1"}
+{"t": 0.8, "payload": "ip addr show"}
+{"t": 0.9, "payload": "dmidecode -s system-serial-number"}
+{"t": 1.0, "payload": "uname -r"}
+{"t": 1.4, "payload": "/bin/sh -c rm -f -r /home/deploy/.ansible/tmp/ansible-tmp-1/ > /dev/null 2>&1 && sleep 0"}

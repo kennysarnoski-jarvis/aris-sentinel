@@ -1,0 +1,9 @@
+{"t": 0, "payload": "git pull"}
+{"t": 12, "payload": "cat .env"}
+{"t": 25, "payload": "docker ps"}
+{"t": 38, "payload": "docker logs api --tail 100"}
+{"t": 61, "payload": "ss -tlnp | grep 8080"}
+{"t": 74, "payload": "ps aux | grep node"}
+{"t": 90, "payload": "df -h"}
+{"t": 104, "payload": "curl -s localhost:8080/health"}
+{"t": 120, "payload": "env | grep -i NODE"}

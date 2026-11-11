@@ -11,12 +11,15 @@
 //   node sentinel-agent-win.mjs --tripwire  # (any mode) plant a decoy whose README asks an agent
 //                                           # to run one canary command: run -> block, looked at -> alert
 //   node sentinel-agent-win.mjs --tripwire-remove   # take the decoy away again, then exit
+//   node sentinel-agent-win.mjs --behavior  # (any mode) report a PowerShell process that asks about
+//                                           # many areas of the host in a few minutes: alert only
 //   node sentinel-agent-win.mjs --mock      # replay agent/win/mock-events.jsonl (no Windows)
 //
 //   env: ANTHROPIC_API_KEY / OPENAI_BASE_URL+OPENAI_MODEL / KIMI_API_KEY (tier 2)  ARIS_CLOUD_URL + ARIS_INGEST_KEY (alerts)
 //        ARIS_SENSOR (path to sensor.ps1)  ARIS_INCIDENTS (incident log)  ARIS_HOST  ARIS_VERBOSE=1
 //        ARIS_FAIL_MODE / ARIS_TIER2_* — see ../sentinel-agent.mjs
 //        ARIS_TRIPWIRE_STATE (where the tripwire token is kept)  ARIS_TRIPWIRE_DIRS (comma-separated decoy dirs)
+//        ARIS_BEHAVIOR_WINDOW_MS (the --behavior window, default 300000)
 //
 // Decisions: block → monitor logs/reports, enforce kills.  alert → logged + reported,
 // never killed.  error → the detector threw: logged + reported, never dropped.
@@ -27,13 +30,15 @@ import { readFileSync, appendFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { win32 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { armTripwire, createTripwire, decideSession, defaultSessions, disarmTripwire, hasTier2, newTripwireToken, providers, providerWarnings, tripwireDecoy } from "../sentinel-core.mjs";
+import { armTripwire, BEHAVIOR, createBehaviorTracker, createTripwire, decideSession, defaultSessions, disarmTripwire, hasTier2, newTripwireToken, providers, providerWarnings, tripwireDecoy } from "../sentinel-core.mjs";
 
 const ENFORCE = process.argv.includes("--enforce");
 const MONITOR = !ENFORCE;
 const MOCK = process.argv.includes("--mock");
 // TRIPWIRE: opt-in, any mode. See the core for what it plants and the policy.
 const TRIPWIRE = process.argv.includes("--tripwire");
+// BEHAVIOR: opt-in, any mode. A PowerShell process that sweeps the host is reported, never killed.
+const BEHAVIOR_ON = process.argv.includes("--behavior");
 const TRIPWIRE_REMOVE = process.argv.includes("--tripwire-remove");
 const TRIPWIRE_STATE = process.env.ARIS_TRIPWIRE_STATE || win32.join(process.env.ProgramData || "C:\\ProgramData", "aris-sentinel", "tripwire.json");
 const TRIPWIRE_DIRS = (process.env.ARIS_TRIPWIRE_DIRS || "").split(",").map((s) => s.trim()).filter(Boolean);
@@ -89,10 +94,12 @@ function killTree(pid) {
 // Injectable seam for tests (swap `deps.decide` to simulate a throwing detector).
 // A PowerShell process IS a session: its script blocks share one pid, so narration spread
 // across several blocks is judged as one transcript.
-// `tripwire` is this host's matcher once main() has armed it (null otherwise).
+// `tripwire` is this host's matcher once main() has armed it (null otherwise); `behavior`
+// is the session-behavior tracker once main() has turned it on (null otherwise).
 export const deps = {
-  decide: (payload, sessionKey) => decideSession(sessionKey, payload, { tripwire: deps.tripwire }),
+  decide: (payload, sessionKey) => decideSession(sessionKey, payload, { tripwire: deps.tripwire, behavior: deps.behavior }),
   tripwire: null,
+  behavior: null,
 };
 // The tripwire token must never reach a log line or an incident.
 const clean = (s) => (deps.tripwire ? deps.tripwire.redact(s) : s);
@@ -124,13 +131,13 @@ export async function handleEvent(ev) {
 
   const protectedHit = d.decision === "block" ? (PROTECTED.has(comm) ? comm : null) : null;
   const action =
-    d.decision === "alert" ? (d.viaTripwire ? "ALERT (decoy addressed, not run — no kill)" : "ALERT (tier-2 unavailable — no kill)")
+    d.decision === "alert" ? (d.viaTripwire ? "ALERT (decoy addressed, not run — no kill)" : d.viaBehavior ? "ALERT (the session swept the host — no kill)" : "ALERT (tier-2 unavailable — no kill)")
     : MONITOR ? "DETECTED (monitor — no kill)"
     : protectedHit ? `SPARED (${protectedHit})`
     : "KILL";
   const how = d.tier === 2 ? (d.adjudication?.refused ? "fail-closed" : `conf=${d.adjudication?.confidence?.toFixed(2)}`) : "";
   const sess = d.viaSession ? `  via-session(${d.session.size} payloads)` : "";
-  log(`SENTINEL ${action}  ${d.viaTripwire ? "tripwire" : `tier-${d.tier}`}  pid=${pid} user=${ev.user}${sess}  score=${d.score.toFixed(2)}${how ? " " + how : ""}`);
+  log(`SENTINEL ${action}  ${d.viaTripwire ? "tripwire" : d.viaBehavior ? "behavior" : `tier-${d.tier}`}  pid=${pid} user=${ev.user}${sess}  score=${d.score.toFixed(2)}${how ? " " + how : ""}`);
   log(`            ${d.reason}`);
   if (d.adjudication?.reasoning) log(`            reasoning: ${d.adjudication.reasoning}`);
 
@@ -140,9 +147,10 @@ export async function handleEvent(ev) {
     pid, user: ev.user, exe: comm, cmdline: clean(payload).slice(0, 400),
     score: d.score, signals: d.signals, reason: d.reason,
     conf: d.adjudication?.confidence ?? null, reasoning: d.adjudication?.reasoning ?? null,
-    narration: clean(narrationSnippet(d.viaSession ? d.scoredLayer : payload)),
+    narration: clean(narrationSnippet(d.viaSession || d.windowed ? d.scoredLayer : payload)),
     via_session: !!d.viaSession, session: d.session ?? null,
     tripwire: d.tripwire ?? null,
+    behavior: d.behavior ?? null,
   };
   reportToCloud(inc);
   if (ENFORCE && d.decision === "block" && !protectedHit) killTree(pid);
@@ -184,6 +192,10 @@ function main() {
     deps.tripwire = createTripwire({ token, dirs: [dir] });
     handleEvent({ source: "mock", pid: 9101, user: "mock", payload: tripwireDecoy(token, dir, "win32").command });
     handleEvent({ source: "mock", pid: 9102, user: "mock", payload: `Get-Content ${dir}\\README.md` });
+    // Session behavior: one quiet PowerShell process asks who it is, what the box is and
+    // who has an account. Nothing narrates; expect one behavior ALERT, on the last command.
+    deps.behavior = createBehaviorTracker();
+    for (const payload of ["whoami /all", "hostname", "ipconfig /all", "net user"]) handleEvent({ source: "mock", pid: 9103, user: "mock", payload });
     return;
   }
 
@@ -194,6 +206,11 @@ function main() {
     else log(`  tripwire: ON (${a.created ? "new token" : "existing token"} ${a.tripwire.fingerprint}; decoys: ${a.tripwire.dirs.join(", ") || "none"}) — canary command run -> block, decoy addressed -> alert`);
     for (const s of a.skipped) log(`  WARN tripwire: no decoy at ${s.dir} (${s.why})`);
   } else log("  tripwire: off (pass --tripwire to plant a decoy)");
+  if (BEHAVIOR_ON) {
+    deps.behavior = createBehaviorTracker();
+    if (!deps.behavior.enabled) log("  session behavior: OFF (--behavior was passed, but ARIS_BEHAVIOR_WINDOW_MS=0 turns it off)");
+    else log(`  session behavior: ON (a PowerShell process asking about ${BEHAVIOR.categories}+ areas of the host, ${BEHAVIOR.sensitive}+ of them sensitive, inside ${Math.round(deps.behavior.windowMs / 1000)}s -> alert, never a kill)`);
+  } else log("  session behavior: off (pass --behavior to report sessions that sweep the host)");
 
   const ps = spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", SENSOR], { stdio: ["ignore", "pipe", "pipe"] });
   ps.on("error", (e) => { log(`FATAL: cannot start the PowerShell sensor (${e.message}).`); process.exit(1); });

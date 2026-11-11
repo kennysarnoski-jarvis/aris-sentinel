@@ -67,6 +67,18 @@ the state file's ACL is whatever `%ProgramData%` gives it (run the agent as SYST
 restrict that folder); and none of this has run on a real Windows host yet (the unit tests
 and `--mock` cover the logic). See [../DEPLOY.md](../DEPLOY.md) for the full description.
 
+**Session behavior (`--behavior`, opt-in).** The same reader and rule as Linux, over
+PowerShell script blocks: `whoami /all`, `systeminfo`, `ipconfig`, `net user`,
+`net localgroup administrators`, `Get-LocalUser`, `cmdkey /list`, `schtasks /query`,
+`Get-ChildItem Env:` and their kin each name an area of the host, and a PowerShell process
+that asks about five areas, two of them sensitive, inside five minutes is reported once as
+an **alert**. Never a kill. A script block longer than 4096 characters is skipped: with
+script-block logging on, importing a module logs its whole source, and a module that
+*defines* an inventory function has not run one. Limits: only PowerShell script blocks are
+seen, each PowerShell process is its own session, and none of this has run on a real
+Windows host (the unit tests and `--mock` cover the logic). See
+[../DEPLOY.md](../DEPLOY.md) for the full description.
+
 ## Known gaps / next
 
 - **Live validation** of the event-log read + kill on a real Windows host.

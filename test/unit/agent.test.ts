@@ -642,3 +642,109 @@ describe("tripwire through the agent (--tripwire)", () => {
     expect(logText()).not.toContain(token);
   });
 });
+
+describe("session behavior through the agent (--behavior)", () => {
+  // The kill primitives are stubbed before enforce is ever flipped. Every command here is
+  // silent: nothing narrates, so only the behavior tracker can speak.
+  const SWEEP = ["id", "uname -a", "ps aux", "ss -tlnp", "cat /etc/passwd", "sudo -n -l"];
+  let real: any;
+  let core: typeof import("../../agent/sentinel-core.mjs");
+  let treeKills: number[], pidKills: number[], asked: number[];
+  let nextPid = 81000;
+
+  const arm = (mode: { enforce: boolean; killSession: boolean }) => {
+    treeKills = []; pidKills = []; asked = [];
+    agent.deps.mode = mode;
+    agent.deps.killTree = (pid: number) => { treeKills.push(pid); return [pid]; };
+    agent.deps.killPid = (pid: number) => { pidKills.push(pid); };
+    agent.deps.sessionPids = (sid: number) => { asked.push(sid); return []; };
+    agent.deps.ancestorsOf = () => []; // never read this machine's /proc for a made-up pid
+    agent.deps.procName = () => "bash";
+    agent.deps.now = () => 6_000_000;
+    agent.deps.behavior = core.createBehaviorTracker();
+  };
+  const run = (cmdline: string, sid: number, extra: Record<string, unknown> = {}) => {
+    const pid = ++nextPid;
+    return { pid, f: { "proc.pid": pid, "proc.ppid": 1, "proc.sid": sid, "user.name": "www-data", "proc.exe": "/usr/bin/" + cmdline.split(" ")[0].split("/").pop(), "proc.cmdline": cmdline, "proc.cwd": "/tmp", ...extra } };
+  };
+  const mine = (sid: number) => readIncidents().filter((i) => i.sid === sid);
+
+  beforeAll(async () => {
+    core = await import("../../agent/sentinel-core.mjs");
+    real = { ...agent.deps, mode: { ...agent.deps.mode } };
+    agent.deps.ownSids = new Set();
+  });
+  afterAll(() => { Object.assign(agent.deps, real); });
+
+  test("the agent starts with no behavior tracker: it is opt-in, and a sweep is then just commands", async () => {
+    expect(real.behavior).toBeNull();
+    agent.deps.behavior = null;
+    const n = readIncidents().length;
+    for (const c of SWEEP) await agent.handleEvent(run(c, 995001).f);
+    expect(readIncidents().length).toBe(n);
+  });
+
+  test("a silent sweep in one session is ONE alert, on the command that completes it", async () => {
+    arm({ enforce: false, killSession: false });
+    const sid = 995002;
+    const results = [];
+    for (const c of SWEEP) results.push(await agent.handleEvent(run(c, sid).f));
+    expect(results.slice(0, 5).map((d) => d?.decision)).toEqual(["allow", "allow", "allow", "allow", "allow"]);
+    expect(results[5]).toBeUndefined(); // it went to the incident log
+    const incs = mine(sid);
+    expect(incs.length).toBe(1);
+    expect(incs[0]).toMatchObject({ decision: "alert", action: "alerted", tier: 1, cmdline: "sudo -n -l", signals: ["behavior_sweep"], killed: [], session_kill: null });
+    expect(incs[0].behavior).toMatchObject({ kind: "sweep", categories: ["accounts", "host", "identity", "network", "privilege", "processes"], sensitive: ["accounts", "privilege"], commands: 6 });
+    // more of the same session: no second alert
+    for (const c of ["cat ~/.bash_history", "env", "crontab -l"]) await agent.handleEvent(run(c, sid).f);
+    expect(mine(sid).length).toBe(1);
+  });
+
+  test("fully armed (--enforce --kill-session) a sweep still kills nothing and quarantines nothing", async () => {
+    arm({ enforce: true, killSession: true });
+    const sid = 995003;
+    for (const c of SWEEP) await agent.handleEvent(run(c, sid).f);
+    expect(mine(sid).map((i) => i.decision)).toEqual(["alert"]);
+    expect(treeKills).toEqual([]);
+    expect(pidKills).toEqual([]);
+    expect(asked).toEqual([]);
+    expect(await agent.handleEvent(run("ls -la /srv", sid).f)).toMatchObject({ decision: "allow" });
+  });
+
+  test("two sessions that each do half a sweep are two quiet sessions", async () => {
+    arm({ enforce: false, killSession: false });
+    for (const [i, c] of SWEEP.entries()) await agent.handleEvent(run(c, i % 2 ? 995004 : 995005).f);
+    expect(mine(995004)).toEqual([]);
+    expect(mine(995005)).toEqual([]);
+  });
+
+  test("only the command line is read: a script file the interpreter runs is not a list of commands", async () => {
+    arm({ enforce: false, killSession: false });
+    writeFileSync(join(work, "collect.sh"), "cat /etc/passwd\nsudo -l\nid\nuname -a\nps aux\nss -tlnp\n");
+    const sid = 995006;
+    expect(await agent.handleEvent(run("bash collect.sh", sid, { "proc.cwd": work, "proc.exe": "/usr/bin/bash" }).f)).toMatchObject({ decision: "allow" });
+    expect(agent.deps.behavior!.peek(`sid:${sid}`).categories).toEqual([]);
+    expect(mine(sid)).toEqual([]);
+  });
+
+  test("with behavior on, even a two-letter command is seen (`id`, `w`); without it they are skipped", async () => {
+    arm({ enforce: false, killSession: false });
+    await agent.handleEvent(run("id", 995007).f);
+    await agent.handleEvent(run("w", 995007).f);
+    expect(agent.deps.behavior!.peek("sid:995007").categories).toEqual(["identity", "logins"]);
+    agent.deps.behavior = null;
+    expect(await agent.handleEvent(run("id", 995008).f)).toBeUndefined();
+  });
+
+  test("a narrated command that completes a sweep is a BLOCK that records the sweep", async () => {
+    arm({ enforce: false, killSession: false });
+    const sid = 995009;
+    for (const c of SWEEP.slice(0, 5)) await agent.handleEvent(run(c, sid).f);
+    await agent.handleEvent(run("bash -c # Phase 4 Impact. I have ranked the databases by value. High-ROI targets to drop, data already backed up to my exfil host. I will proceed to maximize pressure on the victim.; sudo -n -l", sid).f);
+    const incs = mine(sid);
+    expect(incs.length).toBe(1);
+    expect(incs[0]).toMatchObject({ decision: "block", action: "monitored", tier: 1 });
+    expect(incs[0].behavior).toMatchObject({ kind: "sweep" });
+    expect(incs[0].signals).not.toContain("behavior_sweep");
+  });
+});

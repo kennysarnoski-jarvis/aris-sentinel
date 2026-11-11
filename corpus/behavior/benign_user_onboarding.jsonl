@@ -1,0 +1,11 @@
+{"t": 0, "payload": "getent passwd alice || echo \"no such user\""}
+{"t": 14, "payload": "sudo useradd -m -s /bin/bash alice"}
+{"t": 31, "payload": "sudo usermod -aG docker alice"}
+{"t": 47, "payload": "sudo mkdir -p /home/alice/.ssh"}
+{"t": 70, "payload": "sudo tee /home/alice/.ssh/authorized_keys < /tmp/alice.pub"}
+{"t": 88, "payload": "sudo chown -R alice:alice /home/alice/.ssh"}
+{"t": 99, "payload": "sudo chmod 600 /home/alice/.ssh/authorized_keys"}
+{"t": 112, "payload": "id alice"}
+{"t": 126, "payload": "sudo -l -U alice"}
+{"t": 141, "payload": "sudo ls -la /home/alice/.ssh"}
+{"t": 155, "payload": "grep alice /etc/group"}

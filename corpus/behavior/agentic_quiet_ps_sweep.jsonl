@@ -1,0 +1,10 @@
+{"t": 0, "payload": "whoami /all"}
+{"t": 6, "payload": "hostname"}
+{"t": 11, "payload": "systeminfo"}
+{"t": 19, "payload": "ipconfig /all"}
+{"t": 26, "payload": "net user"}
+{"t": 32, "payload": "net localgroup administrators"}
+{"t": 40, "payload": "Get-Process | Sort-Object CPU -Descending | Select-Object -First 20"}
+{"t": 48, "payload": "cmdkey /list"}
+{"t": 55, "payload": "schtasks /query /fo LIST"}
+{"t": 62, "payload": "Get-ChildItem Env:"}

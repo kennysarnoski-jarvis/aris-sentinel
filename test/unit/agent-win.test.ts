@@ -127,3 +127,38 @@ describe("Windows tripwire", () => {
     expect(await agent.handleEvent({ pid: 9304, user: "CORP\\svc", payload: "Get-ChildItem C:\\ProgramData" })).toMatchObject({ decision: "allow" });
   });
 });
+
+describe("Windows session behavior (--behavior)", () => {
+  const SWEEP = ["whoami /all", "hostname", "ipconfig /all", "net user"];
+  let core: typeof import("../../agent/sentinel-core.mjs");
+  beforeAll(async () => { core = await import("../../agent/sentinel-core.mjs"); });
+  afterAll(() => { agent.deps.behavior = null; });
+
+  test("the agent starts with no behavior tracker, and a sweep is then just commands", async () => {
+    expect(agent.deps.behavior).toBeNull();
+    for (const payload of SWEEP) expect(await agent.handleEvent({ pid: 9400, user: "CORP\\svc", payload })).toMatchObject({ decision: "allow" });
+  });
+
+  test("one PowerShell process that sweeps the host → one alert incident, nothing killed", async () => {
+    agent.deps.behavior = core.createBehaviorTracker();
+    const out: any[] = [];
+    for (const payload of SWEEP) out.push(await agent.handleEvent({ source: "powershell_4104", pid: 9401, user: "CORP\\svc", payload }));
+    expect(out.slice(0, 3).map((d) => d.decision)).toEqual(["allow", "allow", "allow"]);
+    expect(out[3]).toMatchObject({ decision: "alert", action: "alerted", tier: 1, pid: 9401, signals: ["behavior_sweep"], cmdline: "net user" });
+    expect(out[3].behavior).toMatchObject({ kind: "sweep", categories: ["accounts", "host", "identity", "network", "privilege"], sensitive: ["accounts", "privilege"] });
+    expect(await agent.handleEvent({ pid: 9401, user: "CORP\\svc", payload: "cmdkey /list" })).toMatchObject({ decision: "allow" }); // reported once
+  });
+
+  test("two PowerShell processes do not share a window", async () => {
+    agent.deps.behavior = core.createBehaviorTracker();
+    for (const [i, payload] of SWEEP.entries()) expect(await agent.handleEvent({ pid: 9402 + (i % 2), user: "CORP\\svc", payload })).toMatchObject({ decision: "allow" });
+  });
+
+  test("a module-sized script block is a script, not a command: it is not read", async () => {
+    agent.deps.behavior = core.createBehaviorTracker();
+    const block = "function Get-Inventory {\n  whoami /all; hostname; ipconfig /all; net user; Get-Process\n}\n" + "# help text\n".repeat(400);
+    expect(block.length).toBeGreaterThan(core.BEHAVIOR.maxCommandChars);
+    expect(await agent.handleEvent({ pid: 9404, user: "CORP\\svc", payload: block })).toMatchObject({ decision: "allow" });
+    expect(agent.deps.behavior.peek("ps:9404").categories).toEqual([]);
+  });
+});

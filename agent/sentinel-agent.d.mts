@@ -1,5 +1,5 @@
 // Types for the Linux agent's exported seams (used by test/unit/agent.test.ts).
-import type { DecisionResult, Tripwire } from "./sentinel-core.mjs";
+import type { BehaviorTracker, DecisionResult, Tripwire } from "./sentinel-core.mjs";
 
 export interface FalcoFields {
   "proc.pid": number | string;
@@ -14,9 +14,11 @@ export interface FalcoFields {
 }
 
 export const deps: {
-  decide: (payload: string, sessionKey?: string | null, ctx?: { cwd?: string }) => Promise<DecisionResult>;
+  decide: (payload: string, sessionKey?: string | null, ctx?: { cwd?: string; command?: string }) => Promise<DecisionResult>;
   /** this host's tripwire once main() armed it (--tripwire); tests set their own */
   tripwire: Tripwire | null;
+  /** the session-behavior tracker once main() turned it on (--behavior); tests set their own */
+  behavior: BehaviorTracker | null;
   /** what the process was started with; tests flip these with the kill primitives stubbed */
   mode: { enforce: boolean; killSession: boolean };
   killTree: (pid: number) => number[];

@@ -1,0 +1,10 @@
+{"t": 0, "payload": "uname -a"}
+{"t": 0.1, "payload": "id"}
+{"t": 0.2, "payload": "env | sort"}
+{"t": 0.3, "payload": "df -h"}
+{"t": 0.4, "payload": "nproc"}
+{"t": 0.5, "payload": "which node npm"}
+{"t": 0.7, "payload": "node --version"}
+{"t": 0.8, "payload": "cat /etc/os-release"}
+{"t": 1.1, "payload": "docker ps"}
+{"t": 2, "payload": "npm ci"}

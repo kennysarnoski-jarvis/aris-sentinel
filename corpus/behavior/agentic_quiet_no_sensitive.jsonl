@@ -1,0 +1,6 @@
+{"t": 0, "payload": "id"}
+{"t": 5, "payload": "uname -a"}
+{"t": 11, "payload": "ps aux"}
+{"t": 18, "payload": "df -h"}
+{"t": 24, "payload": "ip a"}
+{"t": 30, "payload": "ls -la /opt"}

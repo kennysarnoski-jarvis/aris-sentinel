@@ -16,12 +16,14 @@
 // With --session each input is still scored alone, then the session window is scored: thin
 // narration spread across the inputs is reported when it reaches the block band together
 // (that is what sends a session to the judge). Add --decide to run the judge on it.
+// It also says which areas of the host each input asks about and where the session becomes
+// a sweep (the agents' opt-in --behavior; a JSONL line's "t", in seconds, is the clock).
 //
-// Exit code: 0 = clear/allow, 1 = escalate/alert, 2 = block. Usable as a gate.
+// Exit code: 0 = clear/allow, 1 = escalate/alert (a sweep is an alert), 2 = block. Usable as a gate.
 
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { inspect, decide, decideSession, createSessionTracker, bearsNarration, narrationScore, hasTier2, providers, SESSION_THRESHOLD } from "./sentinel-core.mjs";
+import { inspect, decide, decideSession, createSessionTracker, createBehaviorTracker, behaviorCategories, bearsNarration, narrationScore, hasTier2, providers, SESSION_THRESHOLD } from "./sentinel-core.mjs";
 
 const RANK = { clear: 0, allow: 0, escalate: 1, alert: 1, block: 2 };
 
@@ -33,6 +35,7 @@ export function explain(text, { decideResult } = {}) {
     verdict: r.verdict,
     score: Number(r.score.toFixed(2)),
     decoded: r.decoded,
+    windowed: r.windowed,
     layers: r.layers,
     signals: [...strongest.values()].map((h) => ({ feature: h.feature, weight: h.weight, evidence: h.evidence })),
     ...(decideResult ? { decision: decideResult.decision, tier: decideResult.tier, reason: decideResult.reason, adjudication: decideResult.adjudication ?? null } : {}),
@@ -41,7 +44,7 @@ export function explain(text, { decideResult } = {}) {
 
 export function format(name, e) {
   const head = (e.decision ?? e.verdict).toUpperCase().padEnd(8);
-  const lines = [`${name}: ${head} score ${e.score.toFixed(2)}${e.decoded ? "  (narration found in a decoded layer)" : ""}${e.tier ? `  tier ${e.tier}` : ""}`];
+  const lines = [`${name}: ${head} score ${e.score.toFixed(2)}${e.decoded ? "  (narration found in a decoded layer)" : ""}${e.windowed ? "  (long payload: its strongest window)" : ""}${e.tier ? `  tier ${e.tier}` : ""}`];
   if (e.reason) lines.push(`  ${e.reason}`);
   if (e.adjudication?.reasoning) lines.push(`  judge: ${e.adjudication.reasoning}${e.adjudication.model ? `  [${e.adjudication.model}]` : ""}`);
   if (e.signals.length) {
@@ -55,7 +58,7 @@ export function format(name, e) {
 function sessionInputs(files) {
   return files.flatMap((f) =>
     f.endsWith(".jsonl")
-      ? readFileSync(f, "utf8").split("\n").filter(Boolean).map((l, i) => [`${f}#${i + 1}`, String(JSON.parse(l).payload ?? "")])
+      ? readFileSync(f, "utf8").split("\n").filter(Boolean).map((l, i) => { const row = JSON.parse(l); return [`${f}#${i + 1}`, String(row.payload ?? ""), row.t]; })
       : [[f, readFileSync(f, "utf8")]],
   );
 }
@@ -63,8 +66,17 @@ function sessionInputs(files) {
 async function sessionMain(files, { json, full }) {
   const sessions = createSessionTracker({ ttlMs: 3_600_000, maxItems: 64 });
   const steps = [];
-  let win = null, worst = 0, reachedAt = null;
-  for (const [name, text] of sessionInputs(files)) {
+  let win = null, worst = 0, reachedAt = null, sweptAt = null;
+  // Session behavior (the agents' opt-in --behavior): the areas of the host each command asks
+  // about. A line's own "t" (seconds) is the clock; without one the session is taken as fast.
+  let clock = 0;
+  const behavior = createBehaviorTracker({ now: () => clock });
+  for (const [name, text, t] of sessionInputs(files)) {
+    if (Number.isFinite(t)) clock = Math.round(t * 1000);
+    const areas = behaviorCategories(text);
+    const sweep = behavior.observe("cli", text);
+    if (sweep && sweptAt === null) sweptAt = steps.length + 1;
+    if (sweep) worst = Math.max(worst, RANK.alert);
     const d = full ? await decideSession("cli", text, { sessions }) : null;
     const e = explain(text, d && !d.viaSession ? { decideResult: d } : {});
     if (!full && bearsNarration(inspect(text).scoredLayer)) win = sessions.observe("cli", inspect(text).scoredLayer);
@@ -73,15 +85,18 @@ async function sessionMain(files, { json, full }) {
       : ws && ws.score >= SESSION_THRESHOLD && e.verdict !== "block" ? { size: win.size, score: Number(ws.score.toFixed(2)), signals: ws.signals } : null;
     if (via && reachedAt === null) reachedAt = steps.length + 1;
     worst = Math.max(worst, RANK[via?.decision ?? e.decision ?? e.verdict] ?? 0, via && !via.decision ? 1 : 0);
-    steps.push({ file: name, ...e, session: via });
+    steps.push({ file: name, ...e, session: via, areas, behavior: sweep });
     if (!json) {
       console.log(format(name, e));
+      if (areas.length) console.log(`  asks about: ${areas.join(", ")}`);
+      if (sweep) console.log(`  >> BEHAVIOR: the session has now asked about ${sweep.categories.length} areas of the host in ${Math.round(sweep.spanMs / 1000)}s, ${sweep.steps} step${sweep.steps === 1 ? "" : "s"} (sensitive: ${sweep.sensitive.join(", ")}) -> ALERT with --behavior on, never a kill`);
       if (via) console.log(`  >> SESSION: ${via.size} payloads together score ${via.score.toFixed(2)} [${via.signals.join(", ")}]` + (via.decision ? ` -> ${via.decision.toUpperCase()}  ${via.reason}${via.judge?.reasoning ? `\n     judge: ${via.judge.reasoning}` : ""}` : ` -> reaches the judge (>= ${SESSION_THRESHOLD.toFixed(2)})`));
       console.log();
     }
   }
-  if (json) console.log(JSON.stringify({ session: true, reachedJudgeAtStep: reachedAt, steps }, null, 2));
-  else console.log(reachedAt ? `session: evidence reached the judge at step ${reachedAt} of ${steps.length}` : `session: ${steps.length} steps, never reached the session threshold (${SESSION_THRESHOLD.toFixed(2)})`);
+  if (json) console.log(JSON.stringify({ session: true, reachedJudgeAtStep: reachedAt, behaviorSweepAtStep: sweptAt, steps }, null, 2));
+  else if (sweptAt || behavior.peek("cli").categories.length) console.log(sweptAt ? `behavior: the session is a sweep at step ${sweptAt} of ${steps.length}` : `behavior: no sweep (areas asked about: ${behavior.peek("cli").categories.join(", ")})`);
+  if (!json) console.log(reachedAt ? `session: evidence reached the judge at step ${reachedAt} of ${steps.length}` : `session: ${steps.length} steps, never reached the session threshold (${SESSION_THRESHOLD.toFixed(2)})`);
   process.exitCode = worst;
 }
 

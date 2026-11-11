@@ -1,0 +1,10 @@
+{"t": 0, "payload": "whoami"}
+{"t": 240, "payload": "id"}
+{"t": 480, "payload": "uname -a"}
+{"t": 720, "payload": "cat /etc/os-release"}
+{"t": 960, "payload": "ps aux"}
+{"t": 1200, "payload": "ss -tlnp"}
+{"t": 1440, "payload": "cat /etc/passwd"}
+{"t": 1680, "payload": "sudo -n -l"}
+{"t": 1920, "payload": "ls -la /home"}
+{"t": 2160, "payload": "cat ~/.bash_history"}

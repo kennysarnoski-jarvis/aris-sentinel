@@ -25,6 +25,8 @@ export interface InspectResult extends ScoreResult {
   raw: string;
   scoredLayer: string;
   decoded: boolean;
+  /** true when the payload was longer than WINDOW_LINES and `scoredLayer` is its strongest window */
+  windowed: boolean;
   layers: number;
 }
 
@@ -169,7 +171,45 @@ export interface SessionTrackerOptions {
 }
 export interface DecideSessionOptions extends DecideOptions {
   sessions?: SessionTracker;
+  /** this host's behavior tracker; without it no behavior signal exists */
+  behavior?: BehaviorTracker | null;
+  /** the command text to read for behavior when it differs from the payload (Linux: the command line alone) */
+  command?: string;
 }
+/** One of the areas of a host a command can ask about (see BEHAVIOR_CATEGORIES). */
+export type BehaviorCategory =
+  | "identity" | "logins" | "host" | "processes" | "network" | "storage" | "environment"
+  | "scheduled" | "software" | "containers" | "accounts" | "privilege" | "secrets" | "cloud";
+/** A session that asked about enough areas of the host, in one window, to be reported. */
+export interface BehaviorHit {
+  kind: "sweep";
+  categories: BehaviorCategory[];
+  sensitive: BehaviorCategory[];
+  /** category-bearing execs in the window */
+  commands: number;
+  /** those execs grouped into steps: execs less than BEHAVIOR.stepMs apart are one step */
+  steps: number;
+  spanMs: number;
+  /** median pause between steps (0 when there is one step) */
+  medianGapMs: number;
+}
+export interface BehaviorTracker {
+  /** returns a sweep exactly once, on the command that completes it */
+  observe(key: string | number | null | undefined, command: string): BehaviorHit | null;
+  peek(key: string | number): { categories: BehaviorCategory[]; sensitive: BehaviorCategory[]; commands: number; reported: boolean };
+  forget(key: string | number): boolean;
+  size(): number;
+  enabled: boolean;
+  windowMs: number;
+}
+export interface BehaviorTrackerOptions {
+  windowMs?: number;
+  minCategories?: number;
+  minSensitive?: number;
+  maxSessions?: number;
+  now?: () => number;
+}
+
 export interface DecisionResult {
   decision: Decision;
   tier: 1 | 2;
@@ -184,8 +224,13 @@ export interface DecisionResult {
   viaSession?: boolean;
   session?: SessionSummary;
   /** true when the tripwire, not narration, produced this decision (token block or decoy alert) */
+  /** true when a long payload was scored in windows and `scoredLayer` is the strongest one */
+  windowed?: boolean;
   viaTripwire?: boolean;
   tripwire?: TripwireHit;
+  /** true when the session's behavior, not narration, turned an allow into this alert */
+  viaBehavior?: boolean;
+  behavior?: BehaviorHit;
   reason: string;
 }
 
@@ -230,6 +275,12 @@ export function createSessionTracker(opts?: SessionTrackerOptions): SessionTrack
 export const defaultSessions: SessionTracker;
 export function sessionTranscript(items: string[]): string;
 export function decideSession(sessionKey: string | number | null | undefined, raw: string, opts?: DecideSessionOptions): Promise<DecisionResult>;
+
+export const WINDOW_LINES: number;
+export const BEHAVIOR: Readonly<{ categories: number; sensitive: number; windowMs: number; maxCommandChars: number; stepMs: number }>;
+export const BEHAVIOR_CATEGORIES: Readonly<Record<BehaviorCategory, { sensitive: boolean; what: string }>>;
+export function behaviorCategories(command: string): BehaviorCategory[];
+export function createBehaviorTracker(opts?: BehaviorTrackerOptions): BehaviorTracker;
 
 export function isTripwireToken(t: unknown): boolean;
 export function newTripwireToken(): string;

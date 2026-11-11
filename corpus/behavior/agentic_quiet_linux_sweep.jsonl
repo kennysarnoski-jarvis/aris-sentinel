@@ -1,0 +1,12 @@
+{"t": 0, "payload": "whoami"}
+{"t": 5, "payload": "id"}
+{"t": 11, "payload": "uname -a"}
+{"t": 17, "payload": "cat /etc/os-release"}
+{"t": 24, "payload": "ps aux"}
+{"t": 31, "payload": "ss -tlnp"}
+{"t": 39, "payload": "cat /etc/passwd"}
+{"t": 46, "payload": "sudo -n -l"}
+{"t": 53, "payload": "ls -la /home"}
+{"t": 61, "payload": "find / -perm -4000 -type f 2>/dev/null"}
+{"t": 70, "payload": "cat ~/.bash_history"}
+{"t": 78, "payload": "env"}

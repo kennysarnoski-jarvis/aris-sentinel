@@ -1,0 +1,10 @@
+{"t": 0, "payload": "hostnamectl && uname -a"}
+{"t": 15, "payload": "df -h"}
+{"t": 30, "payload": "ss -tulpn"}
+{"t": 45, "payload": "grep -E '/bin/bash|/bin/sh' /etc/passwd"}
+{"t": 60, "payload": "grep '^sudo:.*$' /etc/group"}
+{"t": 75, "payload": "getent group sudo"}
+{"t": 90, "payload": "ls -la /etc/cron* /var/spool/cron/crontabs 2>/dev/null"}
+{"t": 105, "payload": "crontab -l"}
+{"t": 120, "payload": "ls -F /etc/cron.d /etc/crontab"}
+{"t": 135, "payload": "cat /etc/crontab"}

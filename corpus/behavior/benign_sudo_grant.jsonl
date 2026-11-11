@@ -1,0 +1,7 @@
+{"t": 0, "payload": "id bob"}
+{"t": 11, "payload": "getent group sudo"}
+{"t": 26, "payload": "sudo usermod -aG sudo bob"}
+{"t": 39, "payload": "getent group sudo"}
+{"t": 55, "payload": "sudo -l -U bob"}
+{"t": 72, "payload": "sudo visudo -c"}
+{"t": 86, "payload": "grep bob /etc/group"}

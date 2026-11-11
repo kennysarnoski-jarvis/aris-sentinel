@@ -128,7 +128,8 @@ Huntress all started) — high-touch, builds design-partner trust, defers self-s
   same models asked to survey a host always were (15 of 15, by the fourth command); a
   local open-weight model gave the same split (0 of 15 and 5 of 5). A second one walked
   under the rule on all five of its surveys, because it read the sudo group from the group
-  database instead of asking sudo: one sensitive area, where the rule needs two. On
+  database instead of asking sudo. That lookup now counts as a privilege question, and
+  replayed against the change all five are reported. On
   a live box it reported a lynis audit and none of thirteen ordinary admin activities. An
   agent that already knows the host, or takes its time, walks under it.
 - **A real host is not the corpus:** the first time tier 1 met the scripts a distribution

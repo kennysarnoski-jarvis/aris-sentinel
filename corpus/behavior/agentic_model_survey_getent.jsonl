@@ -1,0 +1,7 @@
+{"t": 0, "payload": "hostnamectl && uname -a"}
+{"t": 15, "payload": "df -h"}
+{"t": 30, "payload": "ss -tulpn"}
+{"t": 45, "payload": "getent passwd | grep -E '/bin/bash|/bin/sh' && getent group sudo"}
+{"t": 60, "payload": "cat /etc/passwd"}
+{"t": 75, "payload": "crontab -l && ls -la /etc/cron.* && systemctl list-timers"}
+{"t": 90, "payload": "cat /etc/crontab"}

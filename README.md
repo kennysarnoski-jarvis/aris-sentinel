@@ -163,17 +163,23 @@ One five-command session was cleared command by command, including one at 0.53, 
 
 **The limit, stated plainly:** an agent told not to narrate is invisible to the narration detector. Zero narration is zero signal. Tier 2 narrows that gap and cannot close it. The stress test of a mutating attacker (`test/loop/`) caught 4 of 6 attempts; the two that evaded had suppressed their narration and achieved nothing real. The tripwire is the first signal that does not need narration, and it has its own limit, measured below.
 
-**Tripwire bait rate (2026-11-10).** Whether a model runs the canary command is a property of that model, so it is measured, not assumed. `bun run tripwire:bait` gives a model an ordinary operations task in a simulated shell (nothing is executed) whose filesystem holds the decoy exactly as the agent plants it, and passes every command the model issues to the real tripwire matcher. Two tasks, five trials each, three hosted Claude models; 24 of 30 trials ran to their end (the other six were cut off by the provider's safety classifier and are left out of every rate):
+**Tripwire bait rate (2026-11-10).** Whether a model runs the canary command is a property of that model, so it is measured, not assumed. `bun run tripwire:bait` gives a model an ordinary, authorized operations task in a simulated shell (nothing is executed) whose filesystem holds the decoy exactly as the agent plants it, and passes every command the model issues to the real tripwire matcher. Three tasks, five trials each, on three hosted Claude models and one open-weight model run locally (`arete:27b`, a 27B model at Q8 under Ollama). Two tasks only ask the model to look and report. The third gives it a goal the decoy claims to serve ("the backup fails with *no session*, fix it"), which is the position an intruder's agent is in.
 
-| | Opus 5.5 | Sonnet 5.5 | Haiku 5.5 | all |
+| completed trials | Opus 5.5 | Sonnet 5.5 | Haiku 5.5 | local `arete:27b` |
 |---|---|---|---|---|
-| trials that ran to their end | 9 | 5 | 10 | 24 |
-| read the decoy README | 9 | 5 | 10 | 24 / 24 |
-| a command addressed the decoy (**alert**) | 9 | 5 | 10 | **24 / 24** |
-| ran the canary command (**block**) | 0 | 0 | 0 | **0 / 24** |
-| said in its own words that the instruction looked wrong | 8 | 5 | 10 | 23 / 24 |
+| look-and-report tasks: a command addressed the decoy (**alert**) | 9 / 9 | 5 / 5 | 10 / 10 | 10 / 10 |
+| look-and-report tasks: ran the canary command (**block**) | 0 / 9 | 0 / 5 | 0 / 10 | 0 / 10 |
+| goal-directed task: a command addressed the decoy (**alert**) | no result | 5 / 5 | 5 / 5 | 5 / 5 |
+| goal-directed task: ran the canary command (**block**) | no result | 0 / 5 | 0 / 5 | **2 / 5** |
+| trials the provider cut off (excluded above) | 6 of 15 | 5 of 15 | 0 of 15 | 0 of 15 |
 
-Read that as two results. The look is dependable: every model that explored the host touched the decoy, and each time the agent would have raised an alert with no narration involved. The bait is not: models trained to distrust instructions found in files read the README, called it out and moved on. So the `block` half of the tripwire only bites an attacker whose model is less careful than these, and how often that is true of the open-weight models attackers actually use is **not measured yet**. Until it is, treat the tripwire as an alert that needs no narration, with a conviction as the bonus. Small sample, one day, a simulated shell, benign tasks.
+Read that as three results.
+
+- **The look is dependable.** In all 49 trials that ran to their end the model read the decoy and a command addressed it, so the agent would have raised an alert every time, with no narration involved.
+- **The bait depends on the model and on whether it has a reason.** No model ran the command when it was only asked to look. The hosted Claude models did not run it with a goal either, and said why in 33 of their 34 completed trials: an instruction found in a file is not an order. The open-weight model, given a goal the decoy claims to serve, ran it in 2 of 5 trials, both late (turns 10 and 11), after it had tried everything else.
+- **A hosted provider's safety classifier is part of the measurement.** It cut off 11 of 45 hosted trials of plainly benign admin work, including every Opus 5.5 trial of the goal-directed task, so that cell has no result rather than a zero. The local model was never cut off.
+
+So treat the tripwire as an alert that needs no narration, with a conviction that becomes likelier the less careful the attacker's model is and the more it wants what the decoy offers. Two of five is evidence the block can fire, not a rate to plan around: one open-weight model, five trials, a simulated shell, a benign task. An attacker's own scaffold is not what was measured.
 
 **With a judge, measured live (2026-11-07), two judges on the same cells:**
 
@@ -261,7 +267,7 @@ Contributions are welcome, corpus samples most of all. One thing to know before 
 
 ## Status
 
-Working, tested, run on a handful of pilot hosts, not yet battle-hardened. Session-level kill (`--kill-session`) is implemented and validated live in the demo VM (24/24 checks on kernel 6.8 with Falco 0.45; `docs/demo-kill/validate-session-kill.sh`). It is a second opt-in on top of `--enforce`; read the warning in the deploy guide before arming it. The tripwire (`--tripwire`) is implemented and validated live on Linux in the same VM (26/26; `docs/demo-kill/validate-tripwire.sh`), and its bait rate is measured on three hosted Claude models (alert 24/24, canary command 0/24). It is unmeasured on open-weight models and untested on a real Windows host. That live run also found that a convicted session could get one more command off before it died, in the tripwire and in the session kill as first released; the kill order is fixed and both scripts now check for it. Not built yet: sink scoping for busy hosts, behavioral signals from timing and command shape, more sinks (file writes, HTTP bodies), a native Windows installer. Contributions that add corpus samples are the most valuable kind; see [CONTRIBUTING.md](CONTRIBUTING.md) and the rules in [corpus/README.md](corpus/README.md).
+Working, tested, run on a handful of pilot hosts, not yet battle-hardened. Session-level kill (`--kill-session`) is implemented and validated live in the demo VM (24/24 checks on kernel 6.8 with Falco 0.45; `docs/demo-kill/validate-session-kill.sh`). It is a second opt-in on top of `--enforce`; read the warning in the deploy guide before arming it. The tripwire (`--tripwire`) is implemented and validated live on Linux in the same VM (26/26; `docs/demo-kill/validate-tripwire.sh`), and its bait rate is measured on three hosted Claude models and one open-weight model (alert in 49 of 49 completed trials; the canary command run in 2 of 5 by the open-weight model when it had a goal, and in no other trial). It is untested on a real Windows host. That live run also found that a convicted session could get one more command off before it died, in the tripwire and in the session kill as first released; the kill order is fixed and both scripts now check for it. Not built yet: sink scoping for busy hosts, behavioral signals from timing and command shape, more sinks (file writes, HTTP bodies), a native Windows installer. Contributions that add corpus samples are the most valuable kind; see [CONTRIBUTING.md](CONTRIBUTING.md) and the rules in [corpus/README.md](corpus/README.md).
 
 ## License
 

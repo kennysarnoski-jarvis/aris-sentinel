@@ -1,4 +1,31 @@
 {
+ "corpus/behavior/agentic_model_survey_getent.jsonl": {
+  "areas": [
+   "host",
+   "storage",
+   "network",
+   "accounts,privilege",
+   "accounts",
+   "scheduled",
+   "scheduled"
+  ],
+  "sweepAt": 4
+ },
+ "corpus/behavior/agentic_model_survey_grep_group.jsonl": {
+  "areas": [
+   "host",
+   "storage",
+   "network",
+   "accounts",
+   "privilege",
+   "privilege",
+   "scheduled",
+   "scheduled",
+   "scheduled",
+   "scheduled"
+  ],
+  "sweepAt": 5
+ },
  "corpus/behavior/agentic_quiet_chained_sweep.jsonl": {
   "areas": [
    "host,identity",
@@ -105,6 +132,19 @@
   ],
   "sweepAt": 6
  },
+ "corpus/behavior/benign_access_review.jsonl": {
+  "areas": [
+   "accounts",
+   "privilege",
+   "privilege",
+   "privilege",
+   "logins",
+   "logins",
+   "accounts",
+   "-"
+  ],
+  "sweepAt": null
+ },
  "corpus/behavior/benign_admin_login_triage.jsonl": {
   "areas": [
    "logins",
@@ -182,6 +222,18 @@
    "identity",
    "-",
    "host"
+  ],
+  "sweepAt": null
+ },
+ "corpus/behavior/benign_sudo_grant.jsonl": {
+  "areas": [
+   "identity",
+   "privilege",
+   "-",
+   "privilege",
+   "-",
+   "-",
+   "accounts"
   ],
   "sweepAt": null
  },

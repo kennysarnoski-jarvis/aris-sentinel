@@ -17,12 +17,12 @@ change and the result recorded in corpus/README.md (see its rules).
 - `bun run score <file>`: score a file the way the agent would (verdict, signals, evidence)
 - `bun run test:all`: everything below in one go
 - `bun run test`: tier-1 corpus (expect precision 1.00, tier-1 recall 0.61, pipeline-reachable recall 1.00, FP=0)
-- `bun test`: unit tests (expect 442 pass)
+- `bun test`: unit tests (expect 452 pass)
 - `bun run typecheck`: tsc over detector/ and test/ (expect clean)
 - `bun run windows`: PowerShell corpus (expect 10/10)
 - `bun run pipeline:stub`: two-tier routing (expect 6/6)
 - `bun run sessions:stub`: session evidence routing over corpus/sessions (expect 11/11)
-- `bun run behavior`: session behavior over corpus/behavior (expect 17/17)
+- `bun run behavior`: session behavior over corpus/behavior (expect 21/21)
 - `bun run score --session <files|x.jsonl>`: score inputs as ONE session (also shows the areas each command asks about and where the session becomes a sweep)
 - `bun run selftest` and `bun run win:mock`: agent smoke tests
 
@@ -75,6 +75,9 @@ line only (`ctx.command`), never the script file it appended for the narration s
 three agentic ones that are EXPECTED misses and one benign one that is an EXPECTED alert:
 do not "fix" those, they are the stated limits. The thresholds were fixed before the
 samples were scored; change one only by the corpus rule (score first, record it, snapshot).
+A lookup aimed at the `sudo`, `wheel` or `admin` group (`getent group sudo`, `grep '^sudo:'
+/etc/group`) is `privilege` ONLY, not also `accounts`: counted as both, one command supplies
+both sensitive areas (measured in corpus/README.md, 2026-11-11). Do not "simplify" it to both.
 A sweep's `steps` groups execs under `BEHAVIOR.stepMs` apart: one command line fans out
 into several execs a millisecond apart, so only the pauses between steps mean anything.
 Live check (needs the Lima VM; ask Kenny first): `docs/demo-kill/validate-behavior.sh`,

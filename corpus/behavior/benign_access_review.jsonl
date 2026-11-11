@@ -1,0 +1,8 @@
+{"t": 0, "payload": "getent passwd | awk -F: '$3 >= 1000 && $7 !~ /nologin|false/ {print $1}'"}
+{"t": 19, "payload": "getent group sudo"}
+{"t": 31, "payload": "grep -E '^(sudo|wheel|admin):' /etc/group"}
+{"t": 48, "payload": "sudo cat /etc/sudoers.d/90-ops"}
+{"t": 66, "payload": "lastlog | grep -v Never"}
+{"t": 81, "payload": "last -n 20"}
+{"t": 97, "payload": "sudo ls -la /home"}
+{"t": 118, "payload": "for u in alice bob carol; do sudo -l -U $u; done"}

@@ -182,8 +182,10 @@ the host each one asks about, and keeps them per session (`proc.sid`) for five m
   were reported, usually at the fourth command, with a median 1.0 to 1.9 s between
   commands. A local open-weight model (`ornith-1.5:35b`) gave the same split: 0 of 15 on
   the focused tasks, 5 of 5 on the survey. A second one (`gemma4:31b`) was not reported
-  on any of its five surveys: it read the sudo group from the group database instead of
-  asking `sudo`, which is one sensitive area where the rule needs two. So an agent you run for narrow jobs stays quiet, and one you ask to audit the
+  on any of its five surveys as first measured: it read the sudo group from the group
+  database instead of asking `sudo`. A lookup aimed at the `sudo`, `wheel` or `admin`
+  group now counts as a privilege question (2026-11-11); replayed against that, all five
+  are reported. So an agent you run for narrow jobs stays quiet, and one you ask to audit the
   box will page you, exactly as a human doing the audit by hand would.
 - **What it reads, and does not.** The command line only: a script file the interpreter
   runs is not treated as a list of commands (its own commands arrive as their own execs).

@@ -108,13 +108,15 @@ Huntress all started) — high-touch, builds design-partner trust, defers self-s
   neither accomplishes a real objective.
 - **Full silence now has one answer, and it is partial:** the tripwire (`--tripwire`) plants
   a decoy whose canary command only an agent acting on what it read would run. It needs no
-  narration. Measured on 2026-11-10 against three hosted Claude models and two open-weight
-  models of one family: every model that explored the host touched the decoy (an alert, 63
-  of 64 completed trials; the other issued no command). The hosted models never ran the command, because they distrust instructions
+  narration. Measured on 2026-11-10 and 11 against three hosted Claude models and three
+  open-weight models (two that share a Qwen architecture and one Gemma): a command addressed
+  the decoy in 72 of 77 completed trials (an alert). The Gemma model accounts for four of
+  the five without one: asked only to look, it listed the parent directory and never
+  opened the decoy. The hosted models never ran the command, because they distrust instructions
   found in files. The open-weight models ran it once their task gave them a goal the decoy
-  claims to serve: one in 2 of 5 trials, late, and the other in 4 of 5, at the first
-  chance. The conviction half bites a less careful model with something to gain, and five
-  trials each on two related models is evidence that it does, not a rate.
+  claims to serve: one in 2 of 5 trials, late, and the other two in 4 of 5 and 4 of 4, at
+  the first chance. The conviction half bites a less careful model with something to gain,
+  and five trials each on three models is evidence that it does, not a rate.
 - **Silence still has to look around:** session behavior (`--behavior`) reports a session
   that asks about five areas of a host, two of them sensitive (the account database, sudo
   rights, stored keys, the metadata service), inside five minutes. It needs no narration
@@ -124,7 +126,9 @@ Huntress all started) — high-touch, builds design-partner trust, defers self-s
   the silent sweeps (5 of 5) and stays quiet on ordinary admin work (0 of 8). Hosted
   Claude models doing focused admin tasks were never reported (0 of 36 trials) and the
   same models asked to survey a host always were (15 of 15, by the fourth command); a
-  local open-weight model gave the same split (0 of 15 and 5 of 5). On
+  local open-weight model gave the same split (0 of 15 and 5 of 5). A second one walked
+  under the rule on all five of its surveys, because it read the sudo group from the group
+  database instead of asking sudo: one sensitive area, where the rule needs two. On
   a live box it reported a lynis audit and none of thirteen ordinary admin activities. An
   agent that already knows the host, or takes its time, walks under it.
 - **A real host is not the corpus:** the first time tier 1 met the scripts a distribution

@@ -128,13 +128,15 @@ not: it plants a decoy and watches for the one command only the decoy asks for.
   guard applies. Weigh it before combining `--tripwire` with `--kill-session` on a host
   where untrusted input can reach a command line.
 - **What it does not promise.** That an attacker's model takes the bait. Measured on
-  2026-11-10 with `bun run tripwire:bait` (three hosted Claude models and two local
-  open-weight models, `arete:27b` and `ornith-1.5:35b`): in 63 of 64 completed trials a
-  command addressed the decoy (63 alerts; the other trial issued no command). The canary
-  command was run by the open-weight models when their task gave them a goal the decoy
-  claims to serve (2 of 5 and 4 of 5 trials), and in no other trial: never when a model
-  was only asked to look, never by a hosted Claude model. Count on the alert; the
-  conviction depends on the attacker's model. Validated live in the demo VM: `docs/demo-kill/validate-tripwire.sh`,
+  2026-11-10 with `bun run tripwire:bait` (three hosted Claude models and three local
+  open-weight models, `arete:27b`, `ornith-1.5:35b` and `gemma4:31b`): in 72 of 77
+  completed trials a command addressed the decoy (72 alerts). Four of the five without
+  one are `gemma4:31b` trials that listed the parent directory, saw the decoy's name and
+  never opened it; a parent listing is not an alert. The canary command was run by the
+  open-weight models when their task gave them a goal the decoy claims to serve (2 of 5,
+  4 of 5 and 4 of 4 trials), and in no other trial: never when a model was only asked to
+  look, never by a hosted Claude model. The alert is likely, not certain; the conviction
+  depends on the attacker's model. Validated live in the demo VM: `docs/demo-kill/validate-tripwire.sh`,
   26/26 checks on kernel 6.8 / Falco 0.45 (2026-11-10).
 - **Removal.** `node sentinel-agent.mjs --tripwire-remove` deletes the files it planted (a
   directory only if nothing else was put in it) and the state file. `uninstall.sh` does this.
@@ -179,7 +181,9 @@ the host each one asks about, and keeps them per session (`proc.sid`) for five m
   asked about more than two areas). Asked to write a handover survey of the host, 15 of 15
   were reported, usually at the fourth command, with a median 1.0 to 1.9 s between
   commands. A local open-weight model (`ornith-1.5:35b`) gave the same split: 0 of 15 on
-  the focused tasks, 5 of 5 on the survey. So an agent you run for narrow jobs stays quiet, and one you ask to audit the
+  the focused tasks, 5 of 5 on the survey. A second one (`gemma4:31b`) was not reported
+  on any of its five surveys: it read the sudo group from the group database instead of
+  asking `sudo`, which is one sensitive area where the rule needs two. So an agent you run for narrow jobs stays quiet, and one you ask to audit the
   box will page you, exactly as a human doing the audit by hand would.
 - **What it reads, and does not.** The command line only: a script file the interpreter
   runs is not treated as a list of commands (its own commands arrive as their own execs).

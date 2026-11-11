@@ -100,7 +100,10 @@ was tuned afterwards**, including the thresholds.
   shell, real clock): on the three focused admin tasks 0 of 36 completed trials were
   reported, and no trial asked about more than two areas. On `--tasks survey` (an
   authorized handover survey of the host) 15 of 15 were reported, at the fourth command in
-  fourteen, with a median 1.0 to 1.9 s between commands.
+  fourteen, with a median 1.0 to 1.9 s between commands. A local open-weight model
+  (`ornith-1.5:35b`, same harness, `test/tripwire-bait-ornith-results.md`): 0 of 15 on the
+  focused tasks (four areas at most), 5 of 5 on the survey, at command 7, 7, 7, 5 and 1,
+  with a median 0.9 to 2.7 s between commands.
 
 - Live, same day (throwaway Lima VM, Ubuntu 24.04, kernel 6.8.0-147, Falco 0.45.2):
   `docs/demo-kill/validate-behavior.sh` 29/29 on three consecutive runs of the final code, and

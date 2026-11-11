@@ -19,6 +19,8 @@ set -euo pipefail
 # --tripwire (any mode) plants decoy directories (ARIS_TRIPWIRE_DIRS, default
 # /opt/vault-access and /var/backups/vault-access) whose README asks an automated agent to
 # run one canary command. That command running is a detection; uninstall.sh removes them.
+# Those names and the README's wording are public: give this host its own in the env file
+# (ARIS_TRIPWIRE_DIRS, ARIS_TRIPWIRE_README, ARIS_TRIPWIRE_HELPER, ARIS_TRIPWIRE_FLAG; DEPLOY.md).
 # --behavior (any mode) reports a session that asks about many areas of the host in a few
 # minutes (who am I, what runs here, the account database, what may I run as root). It is
 # an alert and never a kill, and it plants nothing.

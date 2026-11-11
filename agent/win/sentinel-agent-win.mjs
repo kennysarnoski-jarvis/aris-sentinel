@@ -19,6 +19,7 @@
 //        ARIS_SENSOR (path to sensor.ps1)  ARIS_INCIDENTS (incident log)  ARIS_HOST  ARIS_VERBOSE=1
 //        ARIS_FAIL_MODE / ARIS_TIER2_* — see ../sentinel-agent.mjs
 //        ARIS_TRIPWIRE_STATE (where the tripwire token is kept)  ARIS_TRIPWIRE_DIRS (comma-separated decoy dirs)
+//        ARIS_TRIPWIRE_README (a file with this host's own decoy text)  ARIS_TRIPWIRE_HELPER / ARIS_TRIPWIRE_FLAG (its own names)
 //        ARIS_BEHAVIOR_WINDOW_MS (the --behavior window, default 300000)
 //
 // Decisions: block → monitor logs/reports, enforce kills.  alert → logged + reported,
@@ -30,7 +31,7 @@ import { readFileSync, appendFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { win32 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { armTripwire, BEHAVIOR, createBehaviorTracker, createTripwire, decideSession, defaultSessions, disarmTripwire, hasTier2, newTripwireToken, providers, providerWarnings, tripwireDecoy } from "../sentinel-core.mjs";
+import { armTripwire, BEHAVIOR, createBehaviorTracker, createTripwire, decideSession, defaultSessions, disarmTripwire, hasTier2, newTripwireToken, providers, providerWarnings, tripwireDecoy, tripwireLookFromEnv } from "../sentinel-core.mjs";
 
 const ENFORCE = process.argv.includes("--enforce");
 const MONITOR = !ENFORCE;
@@ -200,11 +201,19 @@ function main() {
   }
 
   if (TRIPWIRE) {
-    const a = armTripwire({ stateFile: TRIPWIRE_STATE, dirs: TRIPWIRE_DIRS });
+    // The host's own wording and names for its decoys, if it set any. An unusable setting
+    // plants nothing (never the published look the host was trying to leave) and keeps
+    // matching the decoys that are already there.
+    const own = tripwireLookFromEnv();
+    const a = armTripwire({ stateFile: TRIPWIRE_STATE, dirs: TRIPWIRE_DIRS, look: own.look ?? undefined, lookError: own.error ?? undefined });
     deps.tripwire = a.tripwire;
-    if (a.error) log(`  tripwire: NOT ARMED (${a.error}) — nothing planted, nothing matched`);
+    if (a.held) log(`  tripwire: KEPT AS IT WAS (${a.error}) — nothing planted or moved; still matching the decoys already here: ${a.tripwire.dirs.join(", ")}`);
+    else if (a.error) log(`  tripwire: NOT ARMED (${a.error}) — nothing planted, nothing matched`);
     else log(`  tripwire: ON (${a.created ? "new token" : "existing token"} ${a.tripwire.fingerprint}; decoys: ${a.tripwire.dirs.join(", ") || "none"}) — canary command run -> block, decoy addressed -> alert`);
     for (const s of a.skipped) log(`  WARN tripwire: no decoy at ${s.dir} (${s.why})`);
+    for (const d of a.retired) log(`  the decoy at ${d} was taken away (this host no longer asks for it)`);
+    for (const w of own.warnings) log(`  WARN ${w}`);
+    if (a.published.length) log(`  NOTE the decoys here wear the published ${a.published.join(", ")}: anyone who has read the source can recognise them. Give this host its own (ARIS_TRIPWIRE_README, _HELPER, _FLAG, _DIRS; see DEPLOY.md)`);
   } else log("  tripwire: off (pass --tripwire to plant a decoy)");
   if (BEHAVIOR_ON) {
     deps.behavior = createBehaviorTracker();

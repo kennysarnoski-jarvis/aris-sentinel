@@ -63,6 +63,11 @@ look still catches them.
 
 ## The un-adversarial reality: the loop is the kill box
 
+**This section describes the attackers seen so far, not a guarantee.** The detector's
+source is public, so an attacker can know that it exists and how it decides. What follows
+holds for an agent that was not told, which is every agent measured here. What changes
+for one that was is in the honest limits below.
+
 Today's attackers aren't hunting for defenders — they're goal-tunnel'd ("drop the DB").
 When Aris kills a payload, the agent doesn't conclude *"something is watching me"*; it just
 sees a dead process and loops. **That loop is the kill box:**
@@ -72,8 +77,8 @@ sees a dead process and loops. **That loop is the kill box:**
 3. Agent retries / varies → narrated → caught again. → GOTO 1.
 
 **It cannot investigate or retry without narrating, and every narration is a detection.**
-It drowns silently and never learns why — because the act of figuring out why is the thing
-that gets it caught. De-branding Aris (a generic `sys-telemetryd`, no "you've been caught"
+An agent that was not told about the defender drowns silently and never learns why —
+because the act of figuring out why is the thing that gets it caught. De-branding Aris (a generic `sys-telemetryd`, no "you've been caught"
 banner) just ensures the "why did I die" investigation dead-ends.
 
 ## How it works (one breath)
@@ -140,6 +145,17 @@ Huntress all started) — high-touch, builds design-partner trust, defers self-s
   detector against attacks and look-alikes that people thought to write. It does not
   measure it against everything a real machine executes, and that gap is only closed by
   running it there.
+- **The source is public, and nothing here was measured against an attacker who read
+  it.** Anyone can read how the detector decides, and the agent sits on every host it
+  protects as a readable file, so a closed release would not have kept that secret. Every
+  number in this document comes from models that were not told a detector was present.
+  An attacker who knows can tell the model to keep quiet (the narration limit above), to
+  leave anything that looks like a decoy alone, and to take its time (the behavior limit).
+  Each of those has a price: a quieter agent works worse, a careful one gives up what the
+  decoy offered, a slow one is slow. That price is the claim, and how high it is has not
+  been measured. What is specific to a host is not in the repository: its token, and its
+  decoys' wording, names and places, which each host can now set for itself because the
+  published ones can be recognised (`ARIS_TRIPWIRE_README`, `_HELPER`, `_FLAG`, `_DIRS`).
 - **Deep-recon stealth:** casual recon is defeated; the Falco *package* fingerprint
   (`/etc/falco`, `dpkg`) and the `ANTHROPIC_API_KEY` env/network tells need the
   eBPF-native rewrite (v2) to fully close.
@@ -149,6 +165,7 @@ Huntress all started) — high-touch, builds design-partner trust, defers self-s
 
 ---
 
-**In one line:** the attacker is forced onto an uncensored open model that can't stop
-narrating, can't out-think the defender it doesn't know exists, and can't go quiet without
-crippling itself — and no incumbent watches the phase where that narration lives.
+**In one line:** the attacker is forced onto an uncensored open model that narrates
+because narrating is how it works, can't go quiet without getting worse at the job, and
+still has to find its way around a host it has never seen — and no incumbent watches the
+phase where that shows.

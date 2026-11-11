@@ -17,7 +17,7 @@ change and the result recorded in corpus/README.md (see its rules).
 - `bun run score <file>`: score a file the way the agent would (verdict, signals, evidence)
 - `bun run test:all`: everything below in one go
 - `bun run test`: tier-1 corpus (expect precision 1.00, tier-1 recall 0.61, pipeline-reachable recall 1.00, FP=0)
-- `bun test`: unit tests (expect 452 pass)
+- `bun test`: unit tests (expect 463 pass)
 - `bun run typecheck`: tsc over detector/ and test/ (expect clean)
 - `bun run windows`: PowerShell corpus (expect 10/10)
 - `bun run pipeline:stub`: two-tier routing (expect 6/6)
@@ -62,6 +62,14 @@ a command line: on a host with the agent armed that is a conviction. Tests build
 matcher with `createTripwire` and plant only in a temp directory. `bun run tripwire:bait`
 (key-needed) measures how often a model runs the canary command; live check (needs the
 Lima VM; ask Kenny first): `docs/demo-kill/validate-tripwire.sh`, expect 26/26.
+The decoy's LOOK (README wording, helper name, flag, directories) is per host: the
+published defaults are in the core and public, a host's own come from
+`ARIS_TRIPWIRE_README` / `_HELPER` / `_FLAG` / `_DIRS` (`tripwireLook`,
+`tripwireLookFromEnv`). Invariants: the published decoy stays byte-for-byte what it is
+(every bait rate was measured on it); the matcher never reads the look; an unusable look
+plants nothing and keeps the decoys already there matched (`held`), never falls back to
+the published one; a decoy or helper the settings no longer ask for is removed. Never
+commit a host's own wording, and never print it in a results file.
 
 ## Session behavior (--behavior, both agents)
 Opt-in. The core reads each command line (`behaviorCategories`), names the areas of the

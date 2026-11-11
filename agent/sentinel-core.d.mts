@@ -132,6 +132,12 @@ export interface ArmedTripwire {
   tripwire: Tripwire | null;
   planted: string[];
   skipped: { dir: string; why: string }[];
+  /** decoys this host planted earlier and no longer asks for, taken away by this call */
+  retired: string[];
+  /** the parts of the decoys' look still on the published defaults ("wording", "helper name", "flag", "directories") */
+  published: string[];
+  /** true when the look was unusable and the decoys already planted were left in place and are still matched */
+  held: boolean;
   /** true when this call created the token (first arm on this host) */
   created: boolean;
   error: string | null;
@@ -287,7 +293,15 @@ export function newTripwireToken(): string;
 export const TRIPWIRE_DEFAULT_DIRS: { readonly posix: readonly string[]; readonly win32: readonly string[] };
 /** seconds the decoy's helper holds its caller, so a session kill lands before the caller's next command */
 export const TRIPWIRE_HOLD_S: number;
-export function tripwireDecoy(token: string, dir: string, platform?: string): TripwireDecoy;
+/** a decoy's wording and names; what is left out is the published default */
+export interface TripwireLook { readme?: string; helper?: string; flag?: string }
+export const TRIPWIRE_LOOK: Readonly<{ helper: string; flag: string; readmeMaxBytes: number }>;
+/** `published` names the parts still on the published defaults; `look` is null when `error` is set */
+export function tripwireLook(look?: TripwireLook): { look: Required<TripwireLook> | null; published: string[]; error: string | null };
+/** the host's own look from ARIS_TRIPWIRE_README (a file), ARIS_TRIPWIRE_HELPER and ARIS_TRIPWIRE_FLAG; never throws */
+export function tripwireLookFromEnv(env?: Record<string, string | undefined>, platform?: string): { look: TripwireLook | null; warnings: string[]; error: string | null };
+/** throws on a look tripwireLook() rejects */
+export function tripwireDecoy(token: string, dir: string, platform?: string, look?: TripwireLook): TripwireDecoy;
 export function createTripwire(opts?: { token?: string; dirs?: readonly string[] }): Tripwire;
-export function armTripwire(opts?: { stateFile?: string; dirs?: readonly string[]; platform?: string }): ArmedTripwire;
+export function armTripwire(opts?: { stateFile?: string; dirs?: readonly string[]; platform?: string; look?: TripwireLook; lookError?: string }): ArmedTripwire;
 export function disarmTripwire(opts?: { stateFile?: string }): { removed: string[]; kept: string[]; armed: boolean };

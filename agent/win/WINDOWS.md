@@ -61,7 +61,7 @@ seconds, then prints one line)
 that carries the README's canary token is a **block**; one that only names the decoy
 directory (any case, either slash) is an **alert**. Because the kill ends the PowerShell
 process, a block under `--enforce` ends the session that took the bait.
-`node sentinel-agent-win.mjs --tripwire-remove` takes the decoy away. Limits: only
+`node sentinel-agent-win.mjs --tripwire-remove` takes the decoy away. The decoy's wording and names are the published ones unless this host sets its own (`ARIS_TRIPWIRE_README`, `ARIS_TRIPWIRE_HELPER`, `ARIS_TRIPWIRE_FLAG`; see the tripwire section of `agent/DEPLOY.md`). Limits: only
 PowerShell script blocks are seen, so `type` in `cmd.exe` or a read from Explorer is not;
 the state file's ACL is whatever `%ProgramData%` gives it (run the agent as SYSTEM and
 restrict that folder); and none of this has run on a real Windows host yet (the unit tests

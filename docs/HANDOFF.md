@@ -311,9 +311,49 @@ variant that was scored and rejected, is in corpus/README.md.
   is a replay of its recorded commands.
 - Still missed: a survey that asks about privilege only through `groups <user>` or
   `id <user>`, which stay `identity`. The `docker` group is not in the list.
-- The bait harness keeps only the first 90 characters of each command in its result
-  file, which is why a replay undercounts. Recording the whole command would make every
-  later reader change checkable against every earlier pass.
+- The bait harness kept only the first 90 characters of each command in its result
+  file, which is why a replay of the passes above undercounts. Fixed 2026-11-11 (below):
+  it records every command whole from now on. The earlier result files stay cut.
+
+**A decoy of the host's own (2026-11-11, after the merge of PR #15).** The repository is
+public, so the decoy's published wording, its names (`register`, `--ticket`) and its
+default directories (`vault-access`) can be recognised by anyone who has read it: by the
+directory's name in a parent listing, which is not an alert (the Gemma miss above), or by
+the text. Each host can now set its own: `ARIS_TRIPWIRE_README` (a file; `{{command}}`
+marks the canary command, `{{dir}}` the decoy's directory), `ARIS_TRIPWIRE_HELPER`,
+`ARIS_TRIPWIRE_FLAG`, next to the `ARIS_TRIPWIRE_DIRS` that already existed. In the core:
+`tripwireLook` (the check and the defaults), `tripwireLookFromEnv` (the settings),
+`tripwireDecoy(..., look)`, `armTripwire({ look, lookError })`.
+
+- The published decoy is byte-for-byte unchanged on Linux, macOS and Windows (compared
+  against the core at `a69c5db`), so `validate-tripwire.sh` and every measured bait rate
+  still describe it. The matcher and the policy were not touched.
+- New arming behavior: a decoy the settings no longer ask for is removed (`retired`), and
+  a renamed helper does not leave the old one behind. Before this a decoy stayed planted
+  and matched forever once planted, whatever `ARIS_TRIPWIRE_DIRS` said later.
+- An unusable setting plants nothing and moves nothing, and the decoys already planted
+  stay matched (`held`, logged as `tripwire: KEPT AS IT WAS`). It never falls back to the
+  published look.
+- The agents log which parts are still published, and warn when the README's source file
+  can be read by other users.
+- `bun run tripwire:bait` reads the same settings, says in its results which parts were
+  the run's own without printing them, and now records every command in full.
+- 11 new unit tests (463). THESIS.md and the README now say that the source is public,
+  that no number here was measured against a model told a detector exists, and that the
+  "never learns why" loop describes attackers who were not told.
+- Not done: not run in the VM (`validate-tripwire.sh` was not re-run; it uses the
+  published look and its own directories, which this change leaves alone). The Linux
+  agent's start-up was run on macOS against a temp directory with a stand-in sensor:
+  published look, own look with a move, and a broken setting. Windows: unit tests only.
+  The bait harness was run end to end against a scripted stand-in on the OpenAI wire (no
+  model): published look, own look in its own directory, and a look-only pass. The token
+  appeared nowhere in the results and a 190-character command was recorded whole.
+- Not measured: any wording other than the published one, and any model told that a
+  detector or a decoy may be present. The harness's tasks are written around the
+  published decoy; a decoy about something else needs a task to match.
+- Still recognisable in a decoy of a host's own: the token's shape (`tk_` and 32 hex
+  characters), a README beside one executable, and the helper's body (a two-second wait
+  and one line). Opening either file to check is itself the alert.
 
 Session kill, not done: the validation used no judge (session alert path only; the judged session-block
 path is covered by `bun run sessions` on real judges, not on a kernel). Windows has no

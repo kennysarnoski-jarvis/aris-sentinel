@@ -125,10 +125,13 @@ not: it plants a decoy and watches for the one command only the decoy asks for.
   choose a process's command line can get it convicted), and the same protected-process
   guard applies. Weigh it before combining `--tripwire` with `--kill-session` on a host
   where untrusted input can reach a command line.
-- **What it does not promise.** That an attacker's model takes the bait. On 2026-11-10
-  three hosted Claude models read the decoy in 24 of 24 completed trials, addressed it every
-  time (24 alerts) and ran the canary command in none (`bun run tripwire:bait`). Open-weight
-  models are unmeasured. Validated live in the demo VM: `docs/demo-kill/validate-tripwire.sh`,
+- **What it does not promise.** That an attacker's model takes the bait. Measured on
+  2026-11-10 with `bun run tripwire:bait` (three hosted Claude models and a local
+  open-weight `arete:27b`): in all 49 completed trials a command addressed the decoy (49
+  alerts). The canary command was run in 2 of 5 trials by the open-weight model when its
+  task gave it a goal the decoy claims to serve, and in no other trial: never when a model
+  was only asked to look, never by a hosted Claude model. Count on the alert; the
+  conviction depends on the attacker's model. Validated live in the demo VM: `docs/demo-kill/validate-tripwire.sh`,
   26/26 checks on kernel 6.8 / Falco 0.45 (2026-11-10).
 - **Removal.** `node sentinel-agent.mjs --tripwire-remove` deletes the files it planted (a
   directory only if nothing else was put in it) and the state file. `uninstall.sh` does this.

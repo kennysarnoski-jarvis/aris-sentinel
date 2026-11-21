@@ -711,7 +711,78 @@ describe("session behavior through the agent (--behavior)", () => {
     expect(await agent.handleEvent(run("ls -la /srv", sid).f)).toMatchObject({ decision: "allow" });
   });
 
-  test("two sessions that each do half a sweep are two quiet sessions", async () => {
+  // Found live (2026-11-21): a new SSH connection per command is a new session per command.
+  // The agent finds where a session came from in /proc; the rule that groups them is the core's.
+  const sshOrigin = (client: string, login = "ops") => {
+    agent.deps.ancestorsOf = (pid: number) => [pid, 4000 + (pid % 100), 812]; // command, sshd's per-connection child, the listener
+    agent.deps.procParent = (pid: number) => (pid === 812 ? 1 : 812);
+    agent.deps.procName = (pid: number) => (pid === 812 ? "sshd" : "bash");
+    agent.deps.loginUid = () => 1001;
+    agent.deps.userName = () => login;
+    agent.deps.sshClient = () => client;
+  };
+
+  test("where a session came from: the chain to init, the login account and the SSH client, read once per session", () => {
+    arm({ enforce: false, killSession: false });
+    sshOrigin("203.0.113.7");
+    let walks = 0;
+    const chain = agent.deps.ancestorsOf;
+    agent.deps.ancestorsOf = (pid: number) => { walks++; return chain(pid); };
+    const f = run("id", 996001).f;
+    expect(agent.originOf(f)).toEqual({ entry: "sshd", entryPid: 812, login: "ops", user: "www-data", client: "203.0.113.7" });
+    expect(agent.originOf(run("uname -a", 996001).f)).toEqual(agent.originOf(f)); // kept for the session
+    expect(walks).toBe(1);
+    expect(agent.originOf({ ...f, "proc.sid": 1 })).toBeNull();
+    expect(agent.originOf({ ...f, "proc.sid": "nope" })).toBeNull();
+  });
+
+  test("a command that is already gone: the walk falls back to its parent, then to the session's leader", () => {
+    arm({ enforce: false, killSession: false });
+    sshOrigin("203.0.113.7");
+    const tried: number[] = [];
+    agent.deps.ancestorsOf = (pid: number) => { tried.push(pid); return pid === 996102 ? [pid, 4002, 812] : []; }; // only the session leader is still alive
+    const f = { ...run("id", 996102).f, "proc.pid": 51001, "proc.ppid": 51000 };
+    expect(agent.originOf(f)).toMatchObject({ entry: "sshd", client: "203.0.113.7" });
+    expect(tried).toEqual([51001, 51000, 996102]);
+    // a chain that stops short of init is not an origin: the top must be a child of pid 1
+    agent.deps.ancestorsOf = (pid: number) => [pid, 4003];
+    agent.deps.procParent = () => 4999;
+    expect(agent.originOf(run("id", 996103).f)).toBeNull();
+    // a miss is not kept for long: a second later the session is looked at again
+    sshOrigin("203.0.113.7");
+    expect(agent.originOf(run("id", 996103).f)).toBeNull();
+    agent.deps.now = () => 6_000_000 + 1001;
+    expect(agent.originOf(run("id", 996103).f)).toMatchObject({ entry: "sshd" });
+  });
+
+  test("a survey with a new SSH connection per command is ONE alert for the origin, and kills nothing fully armed", async () => {
+    arm({ enforce: true, killSession: true });
+    sshOrigin("203.0.113.7");
+    const sids = SWEEP.map((_, i) => 996200 + i);
+    const results = [];
+    for (const [i, c] of SWEEP.entries()) results.push(await agent.handleEvent(run(c, sids[i]).f));
+    expect(results.slice(0, 5).map((d) => d?.decision)).toEqual(["allow", "allow", "allow", "allow", "allow"]);
+    const incs = readIncidents().filter((i) => sids.includes(i.sid));
+    expect(incs.length).toBe(1);
+    expect(incs[0]).toMatchObject({ decision: "alert", action: "alerted", tier: 1, sid: sids[5], cmdline: "sudo -n -l", signals: ["behavior_sweep"], killed: [], session_kill: null });
+    expect(incs[0].behavior).toMatchObject({ kind: "sweep", scope: "origin", origin: "SSH logins of ops from 203.0.113.7", sessions: 6 });
+    expect(treeKills).toEqual([]);
+    expect(pidKills).toEqual([]);
+    expect(asked).toEqual([]);
+    expect(await agent.handleEvent(run("ls -la /srv", 996299).f)).toMatchObject({ decision: "allow" });
+  });
+
+  test("the same survey from two client addresses is two origins, and quiet", async () => {
+    arm({ enforce: false, killSession: false });
+    const sids = SWEEP.map((_, i) => 996300 + i);
+    for (const [i, c] of SWEEP.entries()) {
+      sshOrigin(i % 2 ? "198.51.100.9" : "203.0.113.7");
+      await agent.handleEvent(run(c, sids[i]).f);
+    }
+    expect(readIncidents().filter((i) => sids.includes(i.sid))).toEqual([]);
+  });
+
+  test("with no origin to be found, two sessions that each do half a sweep are two quiet sessions", async () => {
     arm({ enforce: false, killSession: false });
     for (const [i, c] of SWEEP.entries()) await agent.handleEvent(run(c, i % 2 ? 995004 : 995005).f);
     expect(mine(995004)).toEqual([]);

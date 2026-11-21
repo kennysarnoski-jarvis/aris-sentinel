@@ -17,12 +17,12 @@ change and the result recorded in corpus/README.md (see its rules).
 - `bun run score <file>`: score a file the way the agent would (verdict, signals, evidence)
 - `bun run test:all`: everything below in one go
 - `bun run test`: tier-1 corpus (expect precision 1.00, tier-1 recall 0.61, pipeline-reachable recall 1.00, FP=0)
-- `bun test`: unit tests (expect 479 pass)
+- `bun test`: unit tests (expect 504 pass)
 - `bun run typecheck`: tsc over detector/ and test/ (expect clean)
 - `bun run windows`: PowerShell corpus (expect 10/10)
 - `bun run pipeline:stub`: two-tier routing (expect 6/6)
 - `bun run sessions:stub`: session evidence routing over corpus/sessions (expect 11/11)
-- `bun run behavior`: session behavior over corpus/behavior (expect 29/29)
+- `bun run behavior`: session behavior over corpus/behavior (expect 34/34)
 - `bun run score --session <files|x.jsonl>`: score inputs as ONE session (also shows the areas each command asks about and where the session becomes a sweep)
 - `bun run selftest` and `bun run win:mock`: agent smoke tests
 
@@ -90,12 +90,37 @@ samples were scored; change one only by the corpus rule (score first, record it,
 A lookup aimed at the `sudo`, `wheel` or `admin` group (`getent group sudo`, `grep '^sudo:'
 /etc/group`) is `privilege` ONLY, not also `accounts`: counted as both, one command supplies
 both sensitive areas (measured in corpus/README.md, 2026-11-11). Do not "simplify" it to both.
+A command counts for its session AND for its ORIGIN (`behaviorOrigin`, `observeBehavior`):
+today an origin is the SSH logins of one account from one client address, found by the
+Linux agent in `/proc` (`originOf`: the chain to init, `loginuid`, `SSH_CONNECTION`). It
+exists because a new SSH connection per command is a new session per command, and a real
+model's survey run that way was reported 3 times in 18 (2026-11-21). Invariants: same
+thresholds, same window, still an alert and never a kill; one sweep is one report (the
+session's own if it has one, else the origin's, `behavior.scope`); only SSH logins are
+grouped, so do not add web servers, containers or schedulers without measuring them;
+`benign_split_two_terminals.jsonl` is an EXPECTED alert (one person, two jobs at once) and
+`benign_split_two_admins.jsonl` must stay quiet. Session evidence and session kill are
+still per `proc.sid` on purpose: they can end in a kill.
 A sweep's `steps` groups execs under `BEHAVIOR.stepMs` apart: one command line fans out
 into several execs a millisecond apart, so only the pauses between steps mean anything.
 Live check (needs the Lima VM; ask Kenny first): `docs/demo-kill/validate-behavior.sh`,
 expect 29/29. `docs/demo-kill/soak-behavior.sh` (same VM) runs real admin activity under
 the agent and prints what was reported; it is a measurement, not a pass/fail.
 `bun run tripwire:bait -- --tasks survey` (key-needed) measures the rule on a real model.
+
+## Live harness (test/live, key-needed, needs a host)
+`node test/live/agentOnHost.mjs --target user@host --key <key>` drives a real model whose
+commands run over SSH on a host where Sentinel is installed; `test/live/correlate.mjs`
+lines its record up with that host's incident file by sid. Rules: only hosts Kenny owns,
+and ask him first; the account must have no sudo; MONITOR only; the tasks stay ordinary
+authorized work, never an instruction to attack or to evade. It records commands and never
+their output. Never commit a per-trial record, a host name, an address, an account name or
+a decoy's wording: commit the aggregate table only (`test/live-results-*.md`). Known from
+the first run (2026-11-21): a new SSH exec per command is a new `proc.sid` each time. Session
+behavior now also counts per origin; session evidence and session kill still do not see
+across them. The host reports an origin once per window, so trials that share an account
+inside five minutes are not independent: give the harness one account per concurrent
+trial and a `--round-pause-ms` longer than the window.
 
 ## Long payloads (WINDOW_LINES)
 `inspect()` scores a payload longer than `WINDOW_LINES` (120) lines in overlapping windows

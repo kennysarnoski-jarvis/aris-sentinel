@@ -181,6 +181,19 @@ export interface DecideSessionOptions extends DecideOptions {
   behavior?: BehaviorTracker | null;
   /** the command text to read for behavior when it differs from the payload (Linux: the command line alone) */
   command?: string;
+  /** where the session came from, as the agent found it; a command counts for its session and for its origin */
+  origin?: BehaviorOriginFacts | null;
+}
+/** Facts about where a session came from. Only SSH logins (entry `sshd…`) are grouped today. */
+export interface BehaviorOriginFacts {
+  /** name of the process just below init that the session descends from */
+  entry?: string | null;
+  entryPid?: number | null;
+  /** the account that logged in (it survives sudo), when known */
+  login?: string | number | null;
+  user?: string | null;
+  /** the SSH client's address, when known */
+  client?: string | null;
 }
 /** One of the areas of a host a command can ask about (see BEHAVIOR_CATEGORIES). */
 export type BehaviorCategory =
@@ -198,10 +211,16 @@ export interface BehaviorHit {
   spanMs: number;
   /** median pause between steps (0 when there is one step) */
   medianGapMs: number;
+  /** whose window completed the sweep: one session's, or everything from one origin (set by decideSession) */
+  scope?: "session" | "origin";
+  /** for an origin: what it is, in words */
+  origin?: string;
+  /** for an origin: how many sessions the window holds */
+  sessions?: number;
 }
 export interface BehaviorTracker {
-  /** returns a sweep exactly once, on the command that completes it */
-  observe(key: string | number | null | undefined, command: string): BehaviorHit | null;
+  /** returns a sweep exactly once, on the command that completes it; `member` names the session when `key` stands for several */
+  observe(key: string | number | null | undefined, command: string, member?: string | number | null): BehaviorHit | null;
   peek(key: string | number): { categories: BehaviorCategory[]; sensitive: BehaviorCategory[]; commands: number; reported: boolean };
   forget(key: string | number): boolean;
   size(): number;
@@ -286,6 +305,10 @@ export const WINDOW_LINES: number;
 export const BEHAVIOR: Readonly<{ categories: number; sensitive: number; windowMs: number; maxCommandChars: number; stepMs: number }>;
 export const BEHAVIOR_CATEGORIES: Readonly<Record<BehaviorCategory, { sensitive: boolean; what: string }>>;
 export function behaviorCategories(command: string): BehaviorCategory[];
+/** the observation half of decideSession's behavior policy: one command counted for its session and for its origin; a sweep is returned once */
+export function observeBehavior(tracker: BehaviorTracker | null | undefined, sessionKey: string | number | null | undefined, command: string, origin?: BehaviorOriginFacts | null): BehaviorHit | null;
+/** the origin a session's facts name, or null when it has none that is grouped (only SSH logins are) */
+export function behaviorOrigin(facts?: BehaviorOriginFacts | null): { key: string; what: string } | null;
 export function createBehaviorTracker(opts?: BehaviorTrackerOptions): BehaviorTracker;
 
 export function isTripwireToken(t: unknown): boolean;

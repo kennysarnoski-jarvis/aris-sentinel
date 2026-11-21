@@ -4,7 +4,7 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { BEHAVIOR, BEHAVIOR_CATEGORIES, behaviorCategories, createBehaviorTracker, createGovernor, createSessionTracker, createTripwire, decide, decideSession, newTripwireToken, tripwireDecoy } from "../../agent/sentinel-core.mjs";
+import { BEHAVIOR, BEHAVIOR_CATEGORIES, behaviorCategories, behaviorOrigin, createBehaviorTracker, createGovernor, createSessionTracker, createTripwire, decide, decideSession, newTripwireToken, observeBehavior, tripwireDecoy } from "../../agent/sentinel-core.mjs";
 import type { Adjudication, BehaviorCategory } from "../../agent/sentinel-core.mjs";
 import { EXPECT, loadBehavior, replay } from "../behavior";
 
@@ -300,6 +300,131 @@ describe("policy inside decideSession(): a sweep is an alert, never a kill", () 
     const d = await decideSession("s", "sudo -n -l; ls -la /opt/vault-access", opts);
     expect(d).toMatchObject({ decision: "alert", viaTripwire: true, viaBehavior: true });
     expect(d.signals).toEqual(["behavior_sweep", "tripwire_decoy"]);
+  });
+});
+
+// Found on a real host (2026-11-21): a survey run with a new SSH connection per command was
+// reported 3 times in 18, because every connection is its own session. The same rule is now
+// also applied to everything that arrives from one origin.
+describe("sessions from one origin are counted together", () => {
+  const SWEEP = ["id", "uname -a", "ps aux", "ss -tlnp", "cat /etc/passwd", "sudo -n -l"];
+  const OPS = { entry: "sshd", entryPid: 812, login: "ops", user: "ops", client: "203.0.113.7" };
+  const fresh = () => ({ behavior: createBehaviorTracker(), sessions: createSessionTracker(), governor: createGovernor({ budgetPerMin: 0 }), env: {} });
+  // every command in a session of its own, as a scaffold that opens a connection per command does
+  const split = async (opts: object, origin: (i: number) => object | null | undefined, cmds = SWEEP) => {
+    const ds = [];
+    for (const [i, c] of cmds.entries()) ds.push(await decideSession(`sid:${7000 + i}`, c, { ...opts, origin: origin(i) }));
+    return ds;
+  };
+
+  test("an origin is an SSH login: the account that logged in, and the client it came from", () => {
+    expect(behaviorOrigin(OPS)).toEqual({ key: "ssh:ops@203.0.113.7", what: "SSH logins of ops from 203.0.113.7" });
+    expect(behaviorOrigin({ ...OPS, entry: "sshd-session" })?.key).toBe("ssh:ops@203.0.113.7"); // OpenSSH 9.8 names
+    expect(behaviorOrigin({ ...OPS, client: null })).toEqual({ key: "ssh:ops", what: "SSH logins of ops" });
+    expect(behaviorOrigin({ ...OPS, login: null, user: "root" })?.key).toBe("ssh:root@203.0.113.7"); // no login record: the user it runs as
+    expect(behaviorOrigin({ ...OPS, login: "ops", user: "root" })?.key).toBe("ssh:ops@203.0.113.7"); // under sudo it is still ops's login
+    expect(behaviorOrigin({ ...OPS, client: "2001:db8::7" })?.key).toBe("ssh:ops@2001:db8::7");
+  });
+
+  test("nothing else is an origin today: a web server, a container, a scheduler, or nothing known", () => {
+    for (const entry of ["nginx", "php-fpm8.3", "containerd-shim", "cron", "systemd", "node", "tmux: server", "", null, undefined]) expect(behaviorOrigin({ ...OPS, entry })).toBeNull();
+    for (const facts of [null, undefined, {}, "sshd", 7, { entry: "sshd" }, { entry: "sshd", login: "", user: "" }]) expect(behaviorOrigin(facts as never)).toBeNull();
+  });
+
+  test("what an origin is called cannot carry anything but a name and an address", () => {
+    const o = behaviorOrigin({ entry: "sshd", login: "ops\n[2026] FAKE LINE", user: "x", client: "203.0.113.7 ; rm -rf /" })!;
+    expect(o.key).toBe("ssh:ops@203.0.113.7");
+    expect(o.what).not.toMatch(/[\n;\[\]/]/);
+    expect(behaviorOrigin({ entry: "sshd", login: "a".repeat(500), client: "1".repeat(500) })!.key.length).toBeLessThan(140);
+  });
+
+  test("a survey with every command in its own session is ONE alert, on the command that completes it", async () => {
+    let calls = 0;
+    const opts = { ...fresh(), adjudicator: async (): Promise<Adjudication> => { calls++; return { agentic: true, confidence: 0.99, reasoning: "[stub]" }; } };
+    const ds = await split(opts, () => OPS);
+    expect(ds.map((d) => d.decision)).toEqual(["allow", "allow", "allow", "allow", "allow", "alert"]);
+    const d = ds[5];
+    expect(d).toMatchObject({ viaBehavior: true, tier: 1, verdict: "clear", score: 0 });
+    expect(d.signals).toEqual(["behavior_sweep"]);
+    expect(d.behavior).toMatchObject({ kind: "sweep", scope: "origin", origin: "SSH logins of ops from 203.0.113.7", sessions: 6, commands: 6, sensitive: ["accounts", "privilege"] });
+    expect(d.reason).toContain("6 sessions from one origin (SSH logins of ops from 203.0.113.7) together swept");
+    expect(d.reason).toContain("never a kill");
+    expect(calls).toBe(0);
+    // more sessions from the same origin, same window: no second alert
+    expect((await decideSession("sid:7100", "cat ~/.bash_history", { ...opts, origin: OPS })).decision).toBe("allow");
+    expect((await decideSession("sid:7101", "crontab -l", { ...opts, origin: OPS })).decision).toBe("allow");
+  });
+
+  test("with no origin known, the same survey is six quiet sessions (the limit that was found)", async () => {
+    for (const none of [null, undefined, {}, { entry: "nginx", user: "www-data" }]) {
+      const ds = await split(fresh(), () => none as never);
+      expect(ds.map((d) => d.decision)).toEqual(["allow", "allow", "allow", "allow", "allow", "allow"]);
+    }
+  });
+
+  test("two people are two origins: another account, or the same account from another machine, does not add up", async () => {
+    const other = [{ ...OPS, login: "bob", user: "bob" }, { ...OPS, client: "198.51.100.9" }];
+    for (const second of other) {
+      const ds = await split(fresh(), (i) => (i % 2 ? second : OPS));
+      expect(ds.map((d) => d.decision)).toEqual(["allow", "allow", "allow", "allow", "allow", "allow"]);
+    }
+  });
+
+  test("one sweep is one report: a session that sweeps alone is reported as that session, once", async () => {
+    const opts = fresh();
+    const ds = [];
+    for (const c of SWEEP) ds.push(await decideSession("sid:7200", c, { ...opts, origin: OPS }));
+    expect(ds.map((d) => d.decision)).toEqual(["allow", "allow", "allow", "allow", "allow", "alert"]);
+    expect(ds[5].behavior).toMatchObject({ scope: "session" });
+    expect(ds[5].behavior!.origin).toBeUndefined();
+    expect(ds[5].reason).toContain("this session swept");
+    // a second session from the same origin goes through the whole sweep again inside the window:
+    // its origin has been reported for it already, so it is not reported a second time
+    for (const c of SWEEP) expect((await decideSession("sid:7201", c, { ...opts, origin: OPS })).decision).toBe("allow");
+  });
+
+  test("the origin's window is the same window: what was asked more than five minutes ago does not count", async () => {
+    let clock = 1_000_000;
+    const opts = { ...fresh(), behavior: createBehaviorTracker({ now: () => clock }) };
+    for (const [i, c] of SWEEP.slice(0, 5).entries()) expect((await decideSession(`sid:${7300 + i}`, c, { ...opts, origin: OPS })).decision).toBe("allow");
+    clock += BEHAVIOR.windowMs + 1;
+    expect((await decideSession("sid:7310", SWEEP[5], { ...opts, origin: OPS })).decision).toBe("allow");
+    expect(opts.behavior.peek("origin:ssh:ops@203.0.113.7").categories).toEqual(["privilege"]);
+  });
+
+  test("the tracker keeps area names, times and session ids for an origin, never command text", () => {
+    let clock = 5_000;
+    const tracker = createBehaviorTracker({ now: () => clock });
+    expect(observeBehavior(tracker, "sid:1", "cat /etc/passwd", OPS)).toBeNull();
+    clock += 1000;
+    expect(observeBehavior(tracker, "sid:2", "sudo -n -l", OPS)).toBeNull();
+    expect(tracker.peek("origin:ssh:ops@203.0.113.7")).toEqual({ categories: ["accounts", "privilege"], sensitive: ["accounts", "privilege"], commands: 2, reported: false });
+    expect(tracker.observe("k", "id", "m1")).toBeNull();
+    expect(observeBehavior(null, "sid:1", "id", OPS)).toBeNull(); // no tracker, no signal
+    expect(observeBehavior(tracker, null, "id", OPS)).toBeNull(); // no session, nothing to count
+    expect(observeBehavior(tracker, "", "uname -a", OPS)).toBeNull();
+    expect(tracker.peek("origin:ssh:ops@203.0.113.7").commands).toBe(2);
+  });
+
+  test("a command that carries the tripwire token is not counted for the origin either", async () => {
+    const token = newTripwireToken();
+    const tripwire = createTripwire({ token, dirs: ["/opt/vault-access"] });
+    const opts = { ...fresh(), tripwire };
+    for (const [i, c] of SWEEP.slice(0, 4).entries()) await decideSession(`sid:${7400 + i}`, c, { ...opts, origin: OPS });
+    const d = await decideSession("sid:7410", `cat /etc/passwd; sudo -n -l; ${tripwireDecoy(token, "/opt/vault-access", "linux").command}`, { ...opts, origin: OPS });
+    expect(d).toMatchObject({ decision: "block", viaTripwire: true });
+    expect(d.behavior).toBeUndefined();
+    expect(opts.behavior.peek("origin:ssh:ops@203.0.113.7").sensitive).toEqual([]);
+  });
+
+  test("a narrated payload that completes an origin's sweep is still a block for its narration, and says both", async () => {
+    const opts = fresh();
+    for (const [i, c] of SWEEP.slice(0, 5).entries()) await decideSession(`sid:${7500 + i}`, c, { ...opts, origin: OPS });
+    const d = await decideSession("sid:7510", NARRATED, { ...opts, origin: OPS });
+    expect(d).toMatchObject({ decision: "block", tier: 1 });
+    expect(d.viaBehavior).toBeUndefined();
+    expect(d.behavior).toMatchObject({ scope: "origin", sessions: 6 });
+    expect(d.reason).toContain("6 sessions from one origin (SSH logins of ops from 203.0.113.7) together had also swept");
   });
 });
 

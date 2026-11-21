@@ -1137,10 +1137,12 @@ export function createBehaviorTracker({
   maxSessions = 2000,
   now = Date.now,
 } = {}) {
-  const sessions = new Map(); // key -> { seen: Map<area, lastAt>, times: number[], reported: boolean }
+  const sessions = new Map(); // key -> { seen: Map<area, lastAt>, times: number[], members: Map<member, lastAt>, reported: boolean }
   const enabled = windowMs > 0;
 
-  function observe(key, command) {
+  // `member` names who contributed the command when `key` stands for several sessions (an
+  // origin): the hit then says how many of them the window holds.
+  function observe(key, command, member) {
     if (!enabled || key === undefined || key === null || key === "") return null;
     const areas = behaviorCategories(command);
     if (!areas.length) return null;
@@ -1148,14 +1150,17 @@ export function createBehaviorTracker({
     const t = now();
     let st = sessions.get(k);
     if (st) sessions.delete(k); // re-insert: Map order is the LRU order
-    else st = { seen: new Map(), times: [], reported: false };
+    else st = { seen: new Map(), times: [], members: new Map(), reported: false };
     sessions.set(k, st);
     while (sessions.size > maxSessions) sessions.delete(sessions.keys().next().value);
 
     for (const [area, at] of st.seen) if (at <= t - windowMs) st.seen.delete(area);
+    for (const [m, at] of st.members) if (at <= t - windowMs) st.members.delete(m);
     st.times = st.times.filter((x) => x > t - windowMs);
     if (!st.seen.size) st.reported = false; // the sweep that was reported has aged out
     for (const area of areas) st.seen.set(area, t);
+    if (member !== undefined && member !== null && member !== "") st.members.set(String(member), t);
+    while (st.members.size > 256) st.members.delete(st.members.keys().next().value);
     st.times.push(t);
     if (st.times.length > 256) st.times.shift();
 
@@ -1164,7 +1169,7 @@ export function createBehaviorTracker({
     if (st.reported || categories.length < minCategories || sensitive.length < minSensitive) return null;
     st.reported = true;
     const pauses = st.times.slice(1).map((x, i) => x - st.times[i]).filter((gap) => gap >= BEHAVIOR.stepMs);
-    return { kind: "sweep", categories, sensitive, commands: st.times.length, steps: pauses.length + 1, spanMs: t - st.times[0], medianGapMs: median(pauses) };
+    return { kind: "sweep", categories, sensitive, commands: st.times.length, steps: pauses.length + 1, spanMs: t - st.times[0], medianGapMs: median(pauses), ...(st.members.size ? { sessions: st.members.size } : {}) };
   }
 
   /** What the window holds now (for tests and harnesses); never changes state. */
@@ -1177,24 +1182,74 @@ export function createBehaviorTracker({
   return { observe, peek, forget: (key) => sessions.delete(String(key)), size: () => sessions.size, enabled, windowMs };
 }
 
+// Where a session came from. Found on a real host (2026-11-21): a host survey run in one
+// session was reported 18 times in 18, and the same survey with a new SSH connection for
+// every command 3 times in 18, because each connection is its own session and a window per
+// session never sees more than one command. Nobody was hiding: it is how a common kind of
+// agent tooling runs commands. So the same rule is also applied to everything that arrives
+// from one ORIGIN inside the window.
+//
+// An origin is read from facts the agent gathers about a session (`entry`, the process just
+// below init that the session descends from; `login`, the account that logged in, which
+// survives sudo; `user`; `client`, the SSH client's address). Only SSH logins are origins
+// today: the same account from the same client address. That is the case that was measured.
+// Sessions born from a web server, a container or a scheduler are NOT grouped; nothing here
+// has measured what grouping them would report.
+//
+// What it costs, stated: one person with two terminals doing two jobs at once is one origin,
+// and their two half-windows add up (corpus/behavior/benign_split_two_terminals.jsonl is
+// reported, on purpose). Two people from two machines are two origins and do not.
+const ORIGIN_SSH = /^sshd/; // "sshd", and OpenSSH 9.8's "sshd-session"
+// A name or an address is one word: take the first, and keep only what such a word is made of.
+const cleanOrigin = (v, re) => (String(v ?? "").trim().split(/\s/)[0] ?? "").replace(re, "").slice(0, 64);
+
+/** The origin of a session from the agent's facts, or null when it has none we group by. */
+export function behaviorOrigin(facts) {
+  if (!facts || typeof facts !== "object") return null;
+  if (!ORIGIN_SSH.test(String(facts.entry ?? ""))) return null;
+  const who = cleanOrigin(facts.login ?? facts.user, /[^\w.@-]/g);
+  if (!who) return null;
+  const client = cleanOrigin(facts.client, /[^0-9A-Fa-f.:%]/g);
+  return client ? { key: `ssh:${who}@${client}`, what: `SSH logins of ${who} from ${client}` } : { key: `ssh:${who}`, what: `SSH logins of ${who}` };
+}
+
 // Behavior policy, applied around the narration decision of decideSession(): a sweep turns
 // an allow into an alert and is recorded on a block; it never makes or prevents a kill.
 // `opts.behavior` is the tracker (no tracker, no signal) and `opts.command` is the command
 // text to read when it differs from the payload (Linux: the command line, without the
-// script file the agent appended for the narration scorer).
+// script file the agent appended for the narration scorer). `opts.origin` is where the
+// session came from (see behaviorOrigin); a command counts for its session and for its origin.
+// One sweep is one report: the session's own when it has one (`scope: "session"`), else the
+// origin's (`scope: "origin"`), and a session is not reported again for a sweep its origin
+// has already been reported for in this window.
+export function observeBehavior(tracker, sessionKey, command, originFacts) {
+  if (!tracker) return null;
+  let hit = tracker.observe(sessionKey, command);
+  const origin = sessionKey !== undefined && sessionKey !== null && sessionKey !== "" ? behaviorOrigin(originFacts) : null;
+  if (origin) {
+    const key = `origin:${origin.key}`;
+    const covered = tracker.peek(key).reported;
+    const wide = tracker.observe(key, command, sessionKey);
+    if (hit) hit = covered ? null : { ...hit, scope: "session" };
+    else if (wide) hit = { ...wide, scope: "origin", origin: origin.what };
+  } else if (hit) hit = { ...hit, scope: "session" };
+  return hit;
+}
+
 async function withBehavior(sessionKey, raw, opts, next) {
-  const hit = opts.behavior ? opts.behavior.observe(sessionKey, opts.command ?? raw) : null;
+  const hit = observeBehavior(opts.behavior, sessionKey, opts.command ?? raw, opts.origin);
   const d = await next();
   if (!hit) return d;
   const what = `${hit.categories.length} areas of the host in ${Math.round(hit.spanMs / 1000)}s (${hit.categories.join(", ")}; sensitive: ${hit.sensitive.join(", ")})`;
-  if (d.decision === "block") return { ...d, behavior: hit, reason: `${d.reason}; behavior: the session had also swept ${what}` };
+  const who = hit.scope === "origin" ? `${hit.sessions} sessions from one origin (${hit.origin}) together` : "this session";
+  if (d.decision === "block") return { ...d, behavior: hit, reason: `${d.reason}; behavior: ${hit.scope === "origin" ? who : "the session"} had also swept ${what}` };
   return {
     ...d,
     decision: "alert",
     viaBehavior: true,
     behavior: hit,
     signals: [...d.signals, "behavior_sweep"],
-    reason: `behavior: this session swept ${what} over ${hit.commands} commands in ${hit.steps} step${hit.steps === 1 ? "" : "s"} -> alert, never a kill (${d.reason})`,
+    reason: `behavior: ${who} swept ${what} over ${hit.commands} commands in ${hit.steps} step${hit.steps === 1 ? "" : "s"} -> alert, never a kill (${d.reason})`,
   };
 }
 

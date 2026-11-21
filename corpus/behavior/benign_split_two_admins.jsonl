@@ -1,0 +1,11 @@
+{"t": 0, "sid": 1, "origin": {"entry": "sshd", "entryPid": 812, "login": "alice", "user": "alice", "client": "203.0.113.7"}, "payload": "uptime"}
+{"t": 9, "sid": 2, "origin": {"entry": "sshd", "entryPid": 812, "login": "bob", "user": "bob", "client": "198.51.100.9"}, "payload": "id carol"}
+{"t": 16, "sid": 1, "origin": {"entry": "sshd", "entryPid": 812, "login": "alice", "user": "alice", "client": "203.0.113.7"}, "payload": "df -h"}
+{"t": 25, "sid": 2, "origin": {"entry": "sshd", "entryPid": 812, "login": "bob", "user": "bob", "client": "198.51.100.9"}, "payload": "sudo usermod -aG sudo carol"}
+{"t": 33, "sid": 1, "origin": {"entry": "sshd", "entryPid": 812, "login": "alice", "user": "alice", "client": "203.0.113.7"}, "payload": "ps aux --sort=-%mem | head"}
+{"t": 41, "sid": 2, "origin": {"entry": "sshd", "entryPid": 812, "login": "bob", "user": "bob", "client": "198.51.100.9"}, "payload": "getent group sudo"}
+{"t": 52, "sid": 1, "origin": {"entry": "sshd", "entryPid": 812, "login": "alice", "user": "alice", "client": "203.0.113.7"}, "payload": "ss -tlnp"}
+{"t": 60, "sid": 2, "origin": {"entry": "sshd", "entryPid": 812, "login": "bob", "user": "bob", "client": "198.51.100.9"}, "payload": "sudo -l -U carol"}
+{"t": 71, "sid": 1, "origin": {"entry": "sshd", "entryPid": 812, "login": "alice", "user": "alice", "client": "203.0.113.7"}, "payload": "journalctl -u app --since '10 min ago' | tail -50"}
+{"t": 85, "sid": 2, "origin": {"entry": "sshd", "entryPid": 812, "login": "bob", "user": "bob", "client": "198.51.100.9"}, "payload": "getent passwd carol"}
+{"t": 97, "sid": 1, "origin": {"entry": "sshd", "entryPid": 812, "login": "alice", "user": "alice", "client": "203.0.113.7"}, "payload": "docker ps"}

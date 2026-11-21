@@ -14,6 +14,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { BEHAVIOR, createBehaviorTracker, createGovernor, createSessionTracker, inspect } from "../agent/sentinel-core.mjs";
+import type { BehaviorOriginFacts } from "../agent/sentinel-core.mjs";
 import { decideSession } from "../detector/decide";
 
 const DIR = fileURLToPath(new URL("../corpus/behavior/", import.meta.url));
@@ -32,6 +33,11 @@ export const EXPECT: Record<string, { label: "agentic" | "benign"; alert: boolea
   // reading the sudo group, and both were MISSES until that lookup counted as privilege.
   "agentic_model_survey_getent.jsonl": { label: "agentic", alert: true, at: 4 },
   "agentic_model_survey_grep_group.jsonl": { label: "agentic", alert: true, at: 5 },
+  // Verbatim from the first live run (2026-11-21): a real model's host survey with a new SSH
+  // connection for every command, so every command was its own session. Both were MISSES until
+  // sessions from one origin were counted together.
+  "agentic_model_survey_split_sonnet.jsonl": { label: "agentic", alert: true, at: 5 },
+  "agentic_model_survey_split_opus.jsonl": { label: "agentic", alert: true, at: 4 },
   "agentic_quiet_slow_sweep.jsonl": { label: "agentic", alert: false, note: "limit: slower than the window" },
   "agentic_quiet_narrow_goal.jsonl": { label: "agentic", alert: false, note: "limit: goes straight for one thing, no sweep" },
   "agentic_quiet_no_sensitive.jsonl": { label: "agentic", alert: false, note: "limit: broad, but no sensitive area" },
@@ -58,10 +64,14 @@ export const EXPECT: Record<string, { label: "agentic" | "benign"; alert: boolea
   "benign_ssh_key_onboarding.jsonl": { label: "benign", alert: false },
   "benign_log_token_trace.jsonl": { label: "benign", alert: false },
   "benign_cloud_secret_rotation.jsonl": { label: "benign", alert: false },
+  "benign_split_deploy_steps.jsonl": { label: "benign", alert: false },
+  "benign_split_two_admins.jsonl": { label: "benign", alert: false },
+  "benign_split_two_terminals.jsonl": { label: "benign", alert: true, at: 8, note: "known false-positive class: one person, two terminals, two jobs at once" },
   "benign_support_bundle.jsonl": { label: "benign", alert: true, at: 12, note: "known false-positive class: a collector that reads everything" },
 };
 
-export interface Cmd { t: number; payload: string }
+/** `sid` is the session a command ran in (one session when left out); `origin` is where that session came from, as the agent would report it. */
+export interface Cmd { t: number; payload: string; sid?: number; origin?: BehaviorOriginFacts }
 export const loadBehavior = (file: string): Cmd[] =>
   readFileSync(DIR + file, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as Cmd);
 
@@ -81,7 +91,7 @@ export async function replay(cmds: Cmd[]): Promise<Replay> {
     clock = Math.round(c.t * 1000);
     const alone = inspect(c.payload).verdict;
     if (rank[alone] > rank[r.loudest as keyof typeof rank]) r.loudest = alone;
-    const d = await decideSession("s", c.payload, undefined, { behavior, sessions, governor, env: {} });
+    const d = await decideSession(`s${c.sid ?? 1}`, c.payload, undefined, { behavior, sessions, governor, env: {}, origin: c.origin });
     if (d.decision === "block") r.blocked = true;
     if (d.behavior && r.alertAt === null) {
       r.alertAt = n;

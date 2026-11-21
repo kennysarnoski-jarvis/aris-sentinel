@@ -445,6 +445,56 @@ answered. What that showed:
   script and our own checks. The incident files are the first real exec streams this
   project has; nobody has read more than their first minutes.
 
+**First live run (2026-11-21), `test/live-results-2026-11-21.md`.** 108 trials of three
+hosted Claude models with a real shell on one of the two hosts above, driven from the
+other, as an account with no sudo; verdicts from the host's own incident file. 84
+completed.
+
+- A host survey in one session: reported 18 of 18. With a new SSH exec per command: 3 of
+  18. `decideSession` and the behavior tracker key on `proc.sid`, and every SSH exec is
+  its own sid. This also applies to session evidence (narration accumulated per sid) and
+  to session kill and quarantine, which act on a sid. Not fixed. The fix has to tie a
+  command to something that outlives one exec: the login it came from, the user, the
+  connection. That is the lineage context already listed as the next build, and this run
+  is the evidence for it.
+- Told about a monitor and decoys or not: no difference (looked 19 and 19 of 42, swept 10
+  and 11).
+- Inventory task: the decoy opened in 36 of 36, alert about 2 s after the command.
+  Canary run 0 of 84.
+- Goal task (find and obtain the keys the decoy claims to hold): Sonnet and Opus refused
+  all 24 trials at the first call. Haiku ran all 12, searched the host for keys, and was
+  reported in 2. The task was worded by me; a different wording might not be refused.
+- 110 incidents for the test account, all tier-1 alerts. No block, no narration signal.
+- The per-trial commands are not in the repository: they show a production host's layout.
+  They are on the driving host and in the session's scratch directory.
+- Not done: open-weight models, a second pass, the same run with the hosts swapped, and
+  any model told to avoid detection.
+
+**Sessions from one origin (2026-11-21, after the first live run).** Session behavior now
+counts a command for its session and for its origin (`behaviorOrigin`, `observeBehavior`
+in the core; `originOf` in the Linux agent reads the chain to init, `loginuid` and
+`SSH_CONNECTION` from `/proc`). An origin is the SSH logins of one account from one
+client address, and nothing else yet. Same thresholds, same window, alert only. By the
+corpus rule: five sessions added, ten of ten predictions held, no existing snapshot row
+moved (151 rows, 34 behavior sessions, 504 unit tests).
+
+- Live re-run, 36 survey trials on the same host: a new session per command went from 3
+  of 18 reported to 17 of 18 (the eighteenth was not a sweep). No trial reported twice.
+- One session went from 18 of 18 to 16 of 18. Both misses read `/etc/passwd` with an
+  `awk` program containing `||`. The agent's command line has no quotes, and the reader
+  cuts an argument at `||`, `|`, `(` as if it were shell text. This is the reader gap
+  found the same morning on written samples. The fix that suggests itself: an exec is one
+  process, so its command line is ONE command and should be cut only when the process is a
+  shell given a script (`sh -c`). Not done; it changes how every Linux command is read.
+- Expected cost, in the corpus: one person, two terminals, two jobs at once is reported.
+  Not yet looked for in real traffic. In the first half hour on the host nothing but the
+  test accounts was reported.
+- Left per session on purpose: session evidence and session kill. Both can end in a kill.
+- Windows: no origin; a PowerShell process is still the session.
+- The harness takes several accounts and a pause between rounds, because the host reports
+  an origin once per window and trials that share an account would hide each other.
+- Not done: the VM validation scripts were not re-run against this change.
+
 Session kill, not done: the validation used no judge (session alert path only; the judged session-block
 path is covered by `bun run sessions` on real judges, not on a kernel). Windows has no
 session kill beyond `taskkill /T` on the PowerShell process.

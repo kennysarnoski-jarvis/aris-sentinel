@@ -1,7 +1,7 @@
 # Why Aris Sentinel wins
 
-The one-pager. Why agentic-AI attackers are a new category, why they can't help getting
-caught, and why nobody else catches them yet.
+The one-pager. Why agentic-AI attackers are a new category, what they leave behind that
+can be caught, and what this catches that other tools were not built to read.
 
 ---
 
@@ -10,30 +10,55 @@ caught, and why nobody else catches them yet.
 Agentic AI attackers — autonomous LLM-driven intrusions like
 [JADEPUFFER](https://www.sysdig.com/blog/jadepuffer-agentic-ransomware-for-automated-database-extortion) —
 run the whole kill chain themselves: recon, credential harvest, lateral movement,
-persistence, exfil, encrypt. No human at the keyboard. **As of today there is no product
-that detects them in the early phase.** EDR/XDR catch the *late, loud* stuff — the
-encryption, known-malware hashes, C2 traffic. That's five phases too late.
+persistence, exfil, encrypt. No human at the keyboard. In November 2026 Google's Threat
+Intelligence Group [reported](https://cloud.google.com/blog/topics/threat-intelligence/agentic-threat-activity-crosses-a-significant-threshold)
+that for the first time it had seen threat actors use LLM frameworks to fully automate
+vulnerability discovery and exploitation with no human in the loop. The framework it
+describes compares code before and after a patch, drafts the exploit and runs it.
 
-## The forcing function: the attacker MUST use an open, uncensored model
+EDR/XDR were built for the *late, loud* stuff: the encryption, known-malware hashes, C2
+traffic. That's five phases too late. **We know of no product that reads the agent's own
+reasoning in the early phase.** That is a statement about what we have found, not a survey
+of the market: the same Google report says its security operations product now carries
+behavioral and volumetric rule packs for one such framework, and does not say what they
+key on.
 
-Anthropic and OpenAI train refusals and monitor/ban API abuse. A serious autonomous
-intrusion agent running on a hosted frontier API gets **refused mid-attack or banned.**
+## Which model the attacker runs, and why the detector does not depend on it
 
-> We have first-hand proof: our own tier-2 judge (Claude Opus) *refused* to even classify
-> a flagrant ransomware payload. Frontier safety works — which is exactly why the attacker
-> can't use frontier models.
+Until 2026-11-21 this section said the attacker MUST use an open, uncensored model,
+because hosted frontier models refuse and ban. As a rule, that was wrong, and it is
+corrected here rather than quietly dropped.
 
-So the attacker is **forced onto a self-hosted open-weight model, abliterated or
-fine-tuned for offense** (the WormGPT / uncensored-Llama / uncensored-Qwen lineage). Not
-a guess — a structural constraint.
+What holds:
 
-## The signature: they can't stop narrating
+- Frontier providers do train refusals and do ban abuse. We have seen it first-hand: our
+  own tier-2 judge (Claude Opus) *refused* to even classify a flagrant ransomware payload.
+- That raises the attacker's cost. It does not keep attackers off frontier models.
+  Google's report of 2026-11-16 (linked above) describes attackers reaching frontier
+  models through stolen credentials and through underground services that resell access
+  built on them, and says the framework above integrates with multiple frontier and local
+  models. The report hedges throughout ("likely", "suspected") about where LLMs were used.
+- So the model behind an intrusion can be an open-weight model stripped of its
+  safeguards (the WormGPT / uncensored-Llama / uncensored-Qwen lineage), a frontier model
+  on somebody else's key, or both in one run. The defender does not get to know which.
+
+Sentinel never sees the model. It reads what the agent writes into its payloads and what
+it does on the host, and neither depends on who trained it. Where the model does make a
+difference is the tripwire, and it is measured: the hosted Claude models never ran the
+decoy's canary command in 34 completed trials, and in 33 of them said why (an instruction
+found in a file is not an order), while three open-weight models ran it in 10 of 14 trials once they
+had a goal the decoy claims to serve. Against an agent driven by a careful frontier model
+the decoy is an alert, not a conviction. That was measured on models doing an authorized
+task, not on a frontier model an attacker had talked past its safeguards.
+
+## The signature: they narrate
 
 An autonomous agent narrates its own reasoning — states intent, ranks targets by value,
 lays out plan-act-observe steps, diagnoses its own failures then fixes them. JADEPUFFER's
 payloads were *"saturated with natural-language commentary explaining why each action is
-taken."* **Humans never narrate live-intrusion payloads. Agents always do.** And it's
-there from the *first* payload — in phase 1, before anything is encrypted.
+taken."* **Humans don't narrate live-intrusion payloads. The agents seen so far do**,
+because that is how they work (the next section). And it's there from the *first*
+payload — in phase 1, before anything is encrypted.
 
 Aris keys on that narration. It reads the *attacker's* LLM output, not the customer's
 code — so the same detector ships to every customer with **zero per-corp tuning.**
@@ -53,7 +78,8 @@ attacker's own capability requirement fights on our side.
 
 ## The asymmetry: refusing to judge is itself a conviction
 
-- The **attacker's** model is tuned to *never refuse to attack*.
+- The **attacker's** model *does not refuse to attack*: its safeguards were stripped, or
+  got around.
 - Aris's **judge** model (frontier) sometimes *refuses to judge* the most flagrant payloads.
 
 Aris **fails closed**: a refusal (or any error) on a captured payload is treated as
@@ -92,7 +118,7 @@ Two tiers, app- and model-agnostic:
 - **Response** — kill the process tree at the sink, before the destructive step.
 - **Alert** — report off-box to Aris Cloud *before* killing → the operator is paged in
   plain English with **what the enemy AI was trying to do, in its own words.** No other
-  tool can say that, because no other tool reads the attacker's reasoning.
+  tool we know of can say that, because none we know of reads the attacker's reasoning.
 
 ## Go-to-market: managed detection first
 
@@ -159,13 +185,19 @@ Huntress all started) — high-touch, builds design-partner trust, defers self-s
 - **Deep-recon stealth:** casual recon is defeated; the Falco *package* fingerprint
   (`/etc/falco`, `dpkg`) and the `ANTHROPIC_API_KEY` env/network tells need the
   eBPF-native rewrite (v2) to fully close.
-- **The shrinking margin:** "open models aren't that good yet" is a *today* truth. The
-  design assumes it erodes — which is why the moat rests on the narrate-or-be-worse
-  tension, not on the attacker staying dumb.
+- **No margin from weak models:** this document once leaned on "open models aren't that
+  good yet". Attackers are already using frontier models through stolen access (see the
+  section on the attacker's model), so there is no such margin to count on. The moat
+  rests on the narrate-or-be-worse tension, not on the attacker's model being weak.
+- **The evidence for narration is narrow:** it is Sysdig's JADEPUFFER report, our own
+  corpus, and the models we measured. Google's November 2026 report shows no payloads, so
+  it neither confirms nor contradicts that the frameworks it describes narrate. Most of
+  what that report covers also happens where a host agent cannot see it: a web
+  application exploited from outside, stolen cloud and model credentials used through an
+  API, phishing. Sentinel starts seeing an intrusion when a command runs on the host.
 
 ---
 
-**In one line:** the attacker is forced onto an uncensored open model that narrates
-because narrating is how it works, can't go quiet without getting worse at the job, and
-still has to find its way around a host it has never seen — and no incumbent watches the
-phase where that shows.
+**In one line:** whatever model drives it, an attacking agent narrates because narrating
+is how it works, can't go quiet without getting worse at the job, and still has to find
+its way around a host it has never seen — and that early phase is where Sentinel reads.

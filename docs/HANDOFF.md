@@ -355,6 +355,36 @@ marks the canary command, `{{dir}}` the decoy's directory), `ARIS_TRIPWIRE_HELPE
   characters), a README beside one executable, and the helper's body (a two-second wait
   and one line). Opening either file to check is itself the alert.
 
+**Thesis corrected against Google's report (2026-11-21).** Google Threat Intelligence
+Group's report of 2026-11-16 ("Agentic Threat Activity Crosses a Significant Threshold")
+says that for the first time threat actors were seen using LLM frameworks to fully
+automate vulnerability discovery and exploitation. It describes one such framework
+(patch diffing, drafting the exploit, running it), on whose server Google found scripts
+for internal reconnaissance, brute forcing, and installing and removing webshells. It
+describes frontier models reached through stolen credentials and underground resale, and
+says that framework integrates with frontier and local models. It relays GreyNoise's
+observation of a foothold turned into domain administrator "within minutes" in a PaperCut
+campaign where it rates LLM use as likely. It shows no payloads and says nothing about
+decoys. Docs only, no code:
+
+- THESIS.md no longer says the attacker MUST use an open, uncensored model. The section
+  now says what holds (refusals and bans raise the cost), what the report shows, and that
+  the detector does not depend on the model while the tripwire's conviction does.
+- THESIS.md no longer says no product detects these attackers (the report says Google's
+  security operations product has rule packs for one framework), that agents "always"
+  narrate, or that the design has a margin from open models being weak.
+- README and THESIS now say where a host agent starts seeing, and that the evidence for
+  narration is Sysdig's JADEPUFFER report, the corpus and the models measured here.
+- The report was read through a fetch of the page, and each sentence cited from it was
+  checked against the page's text in a second pass (three were tightened). Google's
+  linked companion articles (ARTEX, LLMJacking) were not read.
+- What the report suggests building, none of it started: saying when a flagged session
+  descends from a web server or another network-facing service (a webshell's shape; the
+  sensor already emits the parent's name and the agent can walk ancestors); a file-write
+  sink for AI coding agents' configuration files (the report describes a group editing
+  `.claude/settings.json` in victims' repositories so the tool fetched a backdoor at
+  start-up); and using the pause between commands, which is recorded today and not used.
+
 Session kill, not done: the validation used no judge (session alert path only; the judged session-block
 path is covered by `bun run sessions` on real judges, not on a kernel). Windows has no
 session kill beyond `taskkill /T` on the PowerShell process.

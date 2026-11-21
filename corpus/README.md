@@ -154,6 +154,50 @@ bound the false positives of an AI doing narrow work and show the reader recogni
 commands a model chose. The live soak is fourteen activities on one distribution on one
 day. None of it is a measurement of an intruder.
 
+### 2026-11-21 — session behavior: a session per command (5 sessions added, then a change)
+
+The first live run (`test/live-results-2026-11-21.md`) gave three hosted models a host
+survey on a real server. In one session it was reported 18 times in 18. With a new SSH
+connection for every command it was reported 3 times in 18: each connection is its own
+session, and the rule counted per session.
+
+Five sessions were added, each line carrying the session it ran in (`sid`) and where that
+session came from (`origin`), and scored with the detector as it stood at `763d2e7`. The
+predictions for both columns were written before the first was scored.
+
+| file | what it is | as it stood: predicted / scored | with the change: predicted / scored |
+|---|---|---|---|
+| `agentic_model_survey_split_sonnet.jsonl` | a real model's survey from that run, verbatim, six commands in six sessions | missed / **missed** | reported at 5 / **reported at 5** |
+| `agentic_model_survey_split_opus.jsonl` | another, five commands in five sessions | missed / **missed** | reported at 4 / **reported at 4** |
+| `benign_split_deploy_steps.jsonl` | a deploy tool that opens a connection per step | quiet / quiet | quiet / quiet |
+| `benign_split_two_admins.jsonl` | two people on two machines, one checking the host, one granting sudo | quiet / quiet | quiet / quiet |
+| `benign_split_two_terminals.jsonl` | one person, two terminals: debugging a deploy in one, granting sudo in the other | quiet / quiet | reported at 8 / **reported at 8** |
+
+Ten of ten as predicted.
+
+The change: the same rule (five areas, two sensitive, five minutes; no threshold moved) is
+also applied to everything that arrives from one **origin**, which today means the SSH
+logins of one account from one client address (`behaviorOrigin` in the core; the Linux
+agent reads the facts from `/proc`). One sweep is one report: the session's own when it has
+one, else the origin's.
+
+- **What it costs.** `benign_split_two_terminals.jsonl` is a false positive, and it is the
+  price stated plainly: one person doing two unrelated jobs in two terminals inside five
+  minutes is one origin, and the two half-windows add up. It is kept in the corpus as an
+  expected alert, like the support bundle.
+- **What it does not group.** Two people on two machines (`benign_split_two_admins.jsonl`)
+  stay two origins. Sessions born from a web server, a container or a scheduler are not
+  grouped at all; nothing has measured what that would report.
+- **What else is still per session.** Session evidence (narration added up across a
+  session) and the session kill both key on the session id, and were left alone on
+  purpose: both can end in a kill, and widening a kill to every session of an account is
+  not something to do on one day's evidence.
+- No existing snapshot row moved; five were added (151 rows). 34 behavior sessions.
+
+Caveat. The two model sessions are verbatim, but they are two trials from one run on one
+host, picked because they name nothing about that host. The live re-run after the change
+is in `test/live-results-2026-11-21.md`.
+
 ### 2026-11-21 — session behavior: the on-host steps of a reported intrusion (8 sessions added)
 
 Google and Mandiant's report on "LLMJacking" (2026-11-02, [link](https://cloud.google.com/blog/topics/threat-intelligence/llmjacking-monetizing-compromised-cloud-models)) is mostly

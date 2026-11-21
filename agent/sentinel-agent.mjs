@@ -166,6 +166,30 @@ function sessionPids(sid) {
   }
   return out;
 }
+/** The account that logged in, as the kernel's audit trail has it: it survives sudo and su. */
+function procLoginUid(pid) {
+  try {
+    const n = Number(readFileSync(`/proc/${pid}/loginuid`, "utf8").trim());
+    return Number.isInteger(n) && n >= 0 && n !== 4294967295 ? n : null; // 2^32-1: never logged in
+  } catch { return null; }
+}
+/** The SSH client's address, from the SSH_CONNECTION sshd puts in a session's environment. */
+function procSshClient(pid) {
+  try {
+    const v = readFileSync(`/proc/${pid}/environ`, "utf8").split("\0").find((e) => e.startsWith("SSH_CONNECTION="));
+    return v ? v.slice("SSH_CONNECTION=".length).split(" ")[0] || null : null;
+  } catch { return null; }
+}
+let passwd = { at: 0, names: new Map() };
+/** uid -> account name, from /etc/passwd read as a file (cached a minute). The number when unknown. */
+function userName(uid) {
+  if (Date.now() - passwd.at > 60_000) {
+    const names = new Map();
+    try { for (const l of readFileSync("/etc/passwd", "utf8").split("\n")) { const p = l.split(":"); if (p.length > 2) names.set(Number(p[2]), p[0]); } } catch {}
+    passwd = { at: Date.now(), names };
+  }
+  return passwd.names.get(uid) ?? String(uid);
+}
 function ancestorsOf(pid) {
   const set = new Set();
   let cur = pid, guard = 0;
@@ -351,7 +375,7 @@ function respond(f, d, payload) {
   // `alert` is never a kill: tier 2 could not judge it, so we page a human instead.
   const guard = d.decision === "block" ? isProtected(p.pid, p.exe) : null;
   const action =
-    d.decision === "alert" ? (d.viaTripwire ? "ALERT (decoy addressed, not run — no kill)" : d.viaBehavior ? "ALERT (the session swept the host — no kill)" : "ALERT (tier-2 unavailable — no kill)")
+    d.decision === "alert" ? (d.viaTripwire ? "ALERT (decoy addressed, not run — no kill)" : d.viaBehavior ? (d.behavior?.scope === "origin" ? "ALERT (sessions from one origin swept the host together — no kill)" : "ALERT (the session swept the host — no kill)") : "ALERT (tier-2 unavailable — no kill)")
     : !deps.mode.enforce ? "DETECTED (monitor — no kill)"
     : guard ? `SPARED (${guard})`
     : "KILL";
@@ -492,7 +516,7 @@ export const sessionKeyOf = (f) => {
 // `tripwire` is this host's matcher once main() has armed it (null otherwise); `behavior`
 // is the session-behavior tracker once main() has turned it on (null otherwise).
 export const deps = {
-  decide: (payload, sessionKey, ctx = {}) => decideSession(sessionKey, payload, { tripwire: deps.tripwire, cwd: ctx.cwd, behavior: deps.behavior, command: ctx.command }),
+  decide: (payload, sessionKey, ctx = {}) => decideSession(sessionKey, payload, { tripwire: deps.tripwire, cwd: ctx.cwd, behavior: deps.behavior, command: ctx.command, origin: ctx.origin }),
   tripwire: null,
   behavior: null,
   mode: { enforce: ENFORCE, killSession: ENFORCE && KILL_SESSION },
@@ -500,10 +524,47 @@ export const deps = {
   sessionPids,
   ancestorsOf: (pid) => [...ancestorsOf(pid)], // [pid, parent, grandparent, …] from /proc
   procName: (pid) => procStatus(pid)?.name ?? "",
+  procParent: (pid) => procStatus(pid)?.ppid ?? null,
+  loginUid: procLoginUid,
+  sshClient: procSshClient,
+  userName,
   killPid: (pid) => process.kill(pid, "SIGKILL"),
   ownSids: OWN_SIDS,
   now: () => Date.now(),
 };
+
+// ── where a session came from ───────────────────────────────────────────────
+// Facts for the core's origin rule (behaviorOrigin): the process just below init that the
+// session descends from, the account that logged in, and for SSH the client's address. All
+// read from /proc, never by running anything. Found once per session and kept: a session's
+// origin does not change, and its first command is the one most likely to still be alive.
+// A short command may be gone before its event is handled, so the walk starts from the
+// command, then its parent, then the session's leader, and takes the first chain that
+// reaches init. No chain means no origin, and the session is then counted on its own.
+const ORIGIN_TTL_MS = 30 * 60_000;
+const ORIGIN_MAX = 4096;
+const origins = new Map(); // sid -> { at, facts }
+export function originOf(f) {
+  const sid = Number(f["proc.sid"]);
+  if (!Number.isInteger(sid) || sid <= 1) return null;
+  const t = deps.now();
+  const kept = origins.get(sid);
+  if (kept && t - kept.at < (kept.facts ? ORIGIN_TTL_MS : 1000)) return kept.facts; // a miss is retried after a second
+  let facts = null;
+  for (const start of [Number(f["proc.pid"]), Number(f["proc.ppid"]), sid]) {
+    if (!Number.isInteger(start) || start <= 1) continue;
+    const chain = deps.ancestorsOf(start); // [start, parent, …], outermost last
+    const top = chain[chain.length - 1];
+    if (!top || deps.procParent(top) !== 1) continue; // broken by a process that already exited
+    const login = deps.loginUid(start);
+    facts = { entry: deps.procName(top), entryPid: top, login: login === null ? null : deps.userName(login), user: f["user.name"] ?? null, client: deps.sshClient(start) ?? deps.sshClient(sid) };
+    break;
+  }
+  origins.delete(sid);
+  origins.set(sid, { at: t, facts });
+  while (origins.size > ORIGIN_MAX) origins.delete(origins.keys().next().value);
+  return facts;
+}
 
 // ── event handling ───────────────────────────────────────────────────────────
 export async function handleEvent(f) {
@@ -526,7 +587,7 @@ export async function handleEvent(f) {
   let d;
   // Behavior reads the command line alone: the script file appended for the narration
   // scorer is text the session may never run, and its own commands arrive as their own execs.
-  try { d = await deps.decide(payload, sessionKeyOf(f), { cwd: f["proc.cwd"], command: f["proc.cmdline"] || "" }); } catch (e) { return respondError(f, e, payload); }
+  try { d = await deps.decide(payload, sessionKeyOf(f), { cwd: f["proc.cwd"], command: f["proc.cmdline"] || "", origin: deps.behavior ? originOf(f) : null }); } catch (e) { return respondError(f, e, payload); }
   if (d.decision === "block" || d.decision === "alert") return respond(f, d, payload);
   // With --behavior the verbose line also says which areas of the host the command asked
   // about, so an operator can see what a session's window holds before it is ever reported.
@@ -595,7 +656,7 @@ function main() {
   if (BEHAVIOR_ON) {
     deps.behavior = createBehaviorTracker();
     if (!deps.behavior.enabled) log(`  session behavior: OFF (--behavior was passed, but ARIS_BEHAVIOR_WINDOW_MS=0 turns it off)`);
-    else log(`  session behavior: ON (a session asking about ${BEHAVIOR.categories}+ areas of the host, ${BEHAVIOR.sensitive}+ of them sensitive, inside ${Math.round(deps.behavior.windowMs / 1000)}s -> alert, never a kill)`);
+    else log(`  session behavior: ON (a session, or the SSH logins of one account from one address together, asking about ${BEHAVIOR.categories}+ areas of the host, ${BEHAVIOR.sensitive}+ of them sensitive, inside ${Math.round(deps.behavior.windowMs / 1000)}s -> alert, never a kill)`);
   } else log(`  session behavior: off (pass --behavior to report sessions that sweep the host)`);
   log(`  cloud alerts: ${CLOUD_URL ? `-> ${CLOUD_URL} (Telegram via Aris Cloud)` : "disabled (set ARIS_CLOUD_URL)"}`);
   log(`  incidents -> ${INCIDENT_LOG}`);

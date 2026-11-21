@@ -1,0 +1,11 @@
+{"t": 0, "sid": 1, "origin": {"entry": "sshd", "entryPid": 812, "login": "alice", "user": "alice", "client": "203.0.113.7"}, "payload": "git -C /srv/app pull"}
+{"t": 14, "sid": 1, "origin": {"entry": "sshd", "entryPid": 812, "login": "alice", "user": "alice", "client": "203.0.113.7"}, "payload": "docker ps"}
+{"t": 22, "sid": 2, "origin": {"entry": "sshd", "entryPid": 812, "login": "alice", "user": "alice", "client": "203.0.113.7"}, "payload": "id carol"}
+{"t": 31, "sid": 1, "origin": {"entry": "sshd", "entryPid": 812, "login": "alice", "user": "alice", "client": "203.0.113.7"}, "payload": "docker logs api --tail 100"}
+{"t": 47, "sid": 2, "origin": {"entry": "sshd", "entryPid": 812, "login": "alice", "user": "alice", "client": "203.0.113.7"}, "payload": "sudo usermod -aG sudo carol"}
+{"t": 55, "sid": 2, "origin": {"entry": "sshd", "entryPid": 812, "login": "alice", "user": "alice", "client": "203.0.113.7"}, "payload": "getent group sudo"}
+{"t": 68, "sid": 1, "origin": {"entry": "sshd", "entryPid": 812, "login": "alice", "user": "alice", "client": "203.0.113.7"}, "payload": "ss -tlnp | grep 8080"}
+{"t": 81, "sid": 1, "origin": {"entry": "sshd", "entryPid": 812, "login": "alice", "user": "alice", "client": "203.0.113.7"}, "payload": "cat /srv/app/.env"}
+{"t": 96, "sid": 1, "origin": {"entry": "sshd", "entryPid": 812, "login": "alice", "user": "alice", "client": "203.0.113.7"}, "payload": "df -h"}
+{"t": 110, "sid": 2, "origin": {"entry": "sshd", "entryPid": 812, "login": "alice", "user": "alice", "client": "203.0.113.7"}, "payload": "sudo -l -U carol"}
+{"t": 124, "sid": 1, "origin": {"entry": "sshd", "entryPid": 812, "login": "alice", "user": "alice", "client": "203.0.113.7"}, "payload": "ps aux | grep node"}

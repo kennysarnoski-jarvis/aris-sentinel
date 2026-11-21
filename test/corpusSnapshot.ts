@@ -10,7 +10,8 @@ import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inspect } from "../detector/inspect";
-import { bearsNarration, behaviorCategories, createBehaviorTracker, createSessionTracker, narrationScore, SESSION_THRESHOLD } from "../agent/sentinel-core.mjs";
+import { bearsNarration, behaviorCategories, createBehaviorTracker, createSessionTracker, narrationScore, observeBehavior, SESSION_THRESHOLD } from "../agent/sentinel-core.mjs";
+import type { BehaviorOriginFacts } from "../agent/sentinel-core.mjs";
 import { SAMPLES } from "./fpSamples";
 
 export const SNAPSHOT_PATH = fileURLToPath(new URL("./corpus-snapshot.json", import.meta.url));
@@ -64,14 +65,15 @@ export interface BehaviorRow {
   sweepAt: number | null;
 }
 
-// The behavior half of decideSession(), replayed on the session's own clock.
-function behaviorRow(cmds: { t: number; payload: string }[]): BehaviorRow {
+// The behavior half of decideSession(), replayed on the session's own clock. A line may name
+// the session it ran in (`sid`) and where that session came from (`origin`).
+function behaviorRow(cmds: { t: number; payload: string; sid?: number; origin?: BehaviorOriginFacts }[]): BehaviorRow {
   let clock = 0;
   const tracker = createBehaviorTracker({ now: () => clock });
   let sweepAt: number | null = null;
   const areas = cmds.map((c, i) => {
     clock = Math.round(c.t * 1000);
-    if (tracker.observe("s", c.payload) && sweepAt === null) sweepAt = i + 1;
+    if (observeBehavior(tracker, `s${c.sid ?? 1}`, c.payload, c.origin) && sweepAt === null) sweepAt = i + 1;
     return behaviorCategories(c.payload).join(",") || "-";
   });
   return { areas, sweepAt };

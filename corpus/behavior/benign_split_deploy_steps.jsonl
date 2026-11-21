@@ -1,0 +1,8 @@
+{"t": 0, "sid": 1, "origin": {"entry": "sshd", "entryPid": 812, "login": "deploy", "user": "deploy", "client": "203.0.113.20"}, "payload": "systemctl is-active app"}
+{"t": 3, "sid": 2, "origin": {"entry": "sshd", "entryPid": 812, "login": "deploy", "user": "deploy", "client": "203.0.113.20"}, "payload": "df -h /srv"}
+{"t": 6, "sid": 3, "origin": {"entry": "sshd", "entryPid": 812, "login": "deploy", "user": "deploy", "client": "203.0.113.20"}, "payload": "git -C /srv/app fetch --tags && git -C /srv/app checkout v2.14.0"}
+{"t": 15, "sid": 4, "origin": {"entry": "sshd", "entryPid": 812, "login": "deploy", "user": "deploy", "client": "203.0.113.20"}, "payload": "docker compose -f /srv/app/compose.yml pull"}
+{"t": 41, "sid": 5, "origin": {"entry": "sshd", "entryPid": 812, "login": "deploy", "user": "deploy", "client": "203.0.113.20"}, "payload": "docker compose -f /srv/app/compose.yml up -d"}
+{"t": 52, "sid": 6, "origin": {"entry": "sshd", "entryPid": 812, "login": "deploy", "user": "deploy", "client": "203.0.113.20"}, "payload": "docker ps --format '{{.Names}} {{.Status}}'"}
+{"t": 55, "sid": 7, "origin": {"entry": "sshd", "entryPid": 812, "login": "deploy", "user": "deploy", "client": "203.0.113.20"}, "payload": "ss -tlnp | grep 8080"}
+{"t": 58, "sid": 8, "origin": {"entry": "sshd", "entryPid": 812, "login": "deploy", "user": "deploy", "client": "203.0.113.20"}, "payload": "curl -fsS localhost:8080/health"}

@@ -61,6 +61,16 @@ FALCO_SRC="$(command -v falco || true)"
 [ -n "$FALCO_SRC" ] || { echo "falco not found on PATH"; exit 1; }
 cp -f "$FALCO_SRC" "$LIB/${NAME}-probe"
 chmod 0755 "$LIB/${NAME}-probe"
+# The agent runs its own copy of the probe. The package starts its own service on install,
+# which would be a second sensor on the same kernel (twice the cost, under its famous name)
+# plus a rule updater that fetches from the network. Stop and mask the ones that exist;
+# uninstall.sh unmasks them. Found on the first real host (2026-11-21): this step was
+# missing, and both sensors were running.
+for u in falco.service falco-modern-bpf.service falco-bpf.service falco-kmod.service falco-custom.service falcoctl-artifact-follow.service falcoctl-artifact-install.service; do
+  systemctl cat "$u" >/dev/null 2>&1 || continue
+  systemctl disable --now "$u" >/dev/null 2>&1 || true
+  systemctl mask "$u" >/dev/null 2>&1 || true
+done
 
 # 3. env file at a generic path. Import prior secrets; set generic config.
 OLD="/etc/aris-sentinel.env"

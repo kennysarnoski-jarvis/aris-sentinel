@@ -1,0 +1,8 @@
+{"t": 0, "payload": "id deploy"}
+{"t": 18, "payload": "ls -la /home/deploy/.ssh"}
+{"t": 36, "payload": "mkdir -p /home/deploy/.ssh"}
+{"t": 54, "payload": "echo 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLE0 newhire@example' >> /home/deploy/.ssh/authorized_keys"}
+{"t": 72, "payload": "chown -R deploy:deploy /home/deploy/.ssh"}
+{"t": 90, "payload": "chmod 600 /home/deploy/.ssh/authorized_keys"}
+{"t": 108, "payload": "sshd -t"}
+{"t": 126, "payload": "systemctl reload ssh"}

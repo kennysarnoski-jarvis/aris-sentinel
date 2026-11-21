@@ -385,6 +385,66 @@ decoys. Docs only, no code:
   `.claude/settings.json` in victims' repositories so the tool fetched a backdoor at
   start-up); and using the pause between commands, which is recorded today and not used.
 
+**Scored against a reported intrusion's on-host steps (2026-11-21).** Google and Mandiant's
+LLMJacking report (2026-11-02) describes four things that happen on a host: secret hunting
+in cloned repositories, a search of logs for credentials, an injected SSH key, and an
+agent-framework backdoor running LLM-chosen commands. Eight sessions were added to
+`corpus/behavior` (four intruder, four ordinary look-alikes), predicted, then scored
+unchanged at `31158d8`: all four intruder sessions are missed, all four ordinary ones are
+quiet, eight of eight as predicted. No detector change. 29 behavior sessions, 479 unit
+tests, 146 snapshot rows (8 added, none moved).
+
+- Why they are missed: the sessions are narrow (1, 1, 2 and 4 areas against a rule of
+  five), and each ordinary twin asks about the same areas as its intruder.
+- Reader gaps found and not fixed: a quoted search pattern is cut at its `|` so only its
+  first alternative is read, and a parenthesis in one can leave a path's last part to be
+  read as a command (`/tmp/w` as `w`, a `logins` area that was never asked); cloud CLIs (`gcloud secrets`, `aws secretsmanager`, `vault`)
+  name no area; a search of logs for key-shaped strings is not read; a write is not read.
+- What that points at: the difference between each pair is where the session came from,
+  not what it typed. That is the lineage context listed above, and it is still not built.
+- The report was read through a fetch of the page. The intruder sessions are written from
+  its descriptions; it shows no commands.
+
+**First real hosts (2026-11-21).** Installed with `install.sh --tripwire --behavior`
+(MONITOR, no judge, a decoy look of each host's own) on two of Kenny's internet-facing
+production servers: Ubuntu 24.04, kernel 7.0, Falco 0.45.2 from the package, Node 18. One
+serves a Next.js site behind Caddy with Postgres; the other is a Docker host with seven
+containers behind nginx. Every service on both was up before and after, and the sites
+answered. What that showed:
+
+- It runs on kernel 7.0: the modern eBPF probe attached with no change. Before this the
+  newest kernel it had run on was 6.17.
+- Cost at rest: the probe under 1% of one CPU and about 100 MB, the agent about 57 MB.
+- The look works live with a host's own decoy: `cat <decoy>/README.md` and `ls` of the
+  decoys alerted on both hosts, and so did a wrapper whose environment named the decoy.
+- **Installer bug, fixed here.** `install.sh` never stopped the Falco package's own
+  services, though `uninstall.sh` and the deploy guide said it had. On the first host two
+  sensors ran side by side, plus Falco's rule updater. `install.sh` now stops and masks
+  the package's services that exist, and `uninstall.sh` unmasks the same list.
+- **First live false alarm.** The distribution's login banner script
+  (`/etc/update-motd.d/50-motd-news`) scores 0.31 on one signal, a comment that says
+  "Let's update", and with no judge that is an alert at every SSH login, on both hosts.
+  This is the "system scripts escalate on a single signal" noise measured in the VM, now
+  seen where it lands. Not fixed.
+- **The wire convicts its own operator.** A check that the token was in no log passed the
+  token to `grep`, and that command line was convicted three times (plain, under `sudo`,
+  and sudo's child). Monitor mode, so nothing was killed. The incidents show the
+  fingerprint, not the token, and the token was in neither the incident file nor the
+  service log. The deploy guide now says how to make that check without tripping it.
+- Later the same day a judge was added on both (a key Kenny made for the test and put
+  there himself). The banner script then stopped alerting: it is judged and cleared.
+- `test/live/agentOnHost.mjs` is the live counterpart of the bait harness: a real model
+  issues commands that run over SSH on a host with Sentinel installed, as an account with
+  no sudo made for the test, and `test/live/correlate.mjs` lines its record up with the
+  host's own incident file by session id. It keeps commands, never their output. A
+  two-trial pilot raised decoy alerts in the right sessions within about two seconds, and
+  showed that a new SSH exec per command puts every command in its own session, which
+  is how session behavior and session evidence count. The full run's results are not in
+  this commit.
+- Not done: no off-box alerts, no `--enforce`. Nothing has attacked either host yet; the incidents so far are the banner
+  script and our own checks. The incident files are the first real exec streams this
+  project has; nobody has read more than their first minutes.
+
 Session kill, not done: the validation used no judge (session alert path only; the judged session-block
 path is covered by `bun run sessions` on real judges, not on a kernel). Windows has no
 session kill beyond `taskkill /T` on the PowerShell process.

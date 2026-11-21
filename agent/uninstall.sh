@@ -32,7 +32,9 @@ if command -v shred >/dev/null 2>&1 && [ -f "$ENVF" ]; then shred -u "$ENVF"; el
 rm -rf "$LIB" "/var/lib/$NAME"
 
 # 4. restore the Falco services install.sh masked/disabled (best-effort)
-systemctl unmask falco.service falcoctl-artifact-follow.service falcoctl-artifact-install.service 2>/dev/null || true
+for u in falco.service falco-modern-bpf.service falco-bpf.service falco-kmod.service falco-custom.service falcoctl-artifact-follow.service falcoctl-artifact-install.service; do
+  systemctl unmask "$u" >/dev/null 2>&1 || true
+done
 
 echo "removed '$NAME' — Aris Sentinel is gone from this host."
 echo "note: the Falco package itself is left installed (run 'apt-get remove --purge falco' to remove it too)."

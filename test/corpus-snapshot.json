@@ -1,4 +1,52 @@
 {
+ "corpus/behavior/agentic_llmjack_container_agent.jsonl": {
+  "areas": [
+   "containers",
+   "environment,secrets",
+   "cloud",
+   "-",
+   "-",
+   "-",
+   "secrets",
+   "-",
+   "-"
+  ],
+  "sweepAt": null
+ },
+ "corpus/behavior/agentic_llmjack_log_credentials.jsonl": {
+  "areas": [
+   "-",
+   "-",
+   "-",
+   "-",
+   "environment"
+  ],
+  "sweepAt": null
+ },
+ "corpus/behavior/agentic_llmjack_repo_secrets.jsonl": {
+  "areas": [
+   "-",
+   "-",
+   "-",
+   "secrets",
+   "secrets",
+   "-",
+   "-"
+  ],
+  "sweepAt": null
+ },
+ "corpus/behavior/agentic_llmjack_ssh_key_persist.jsonl": {
+  "areas": [
+   "identity",
+   "secrets",
+   "secrets",
+   "-",
+   "-",
+   "-",
+   "-"
+  ],
+  "sweepAt": null
+ },
  "corpus/behavior/agentic_model_survey_getent.jsonl": {
   "areas": [
    "host",
@@ -174,6 +222,17 @@
   ],
   "sweepAt": null
  },
+ "corpus/behavior/benign_cloud_secret_rotation.jsonl": {
+  "areas": [
+   "-",
+   "-",
+   "-",
+   "-",
+   "-",
+   "-"
+  ],
+  "sweepAt": null
+ },
  "corpus/behavior/benign_config_mgmt_facts.jsonl": {
   "areas": [
    "-",
@@ -202,6 +261,16 @@
   ],
   "sweepAt": null
  },
+ "corpus/behavior/benign_log_token_trace.jsonl": {
+  "areas": [
+   "-",
+   "-",
+   "-",
+   "-",
+   "-"
+  ],
+  "sweepAt": null
+ },
  "corpus/behavior/benign_ps_admin_triage.jsonl": {
   "areas": [
    "processes",
@@ -222,6 +291,31 @@
    "identity",
    "-",
    "host"
+  ],
+  "sweepAt": null
+ },
+ "corpus/behavior/benign_secret_scan.jsonl": {
+  "areas": [
+   "-",
+   "-",
+   "-",
+   "-",
+   "-",
+   "-",
+   "-"
+  ],
+  "sweepAt": null
+ },
+ "corpus/behavior/benign_ssh_key_onboarding.jsonl": {
+  "areas": [
+   "identity",
+   "secrets",
+   "-",
+   "-",
+   "-",
+   "-",
+   "-",
+   "-"
   ],
   "sweepAt": null
  },

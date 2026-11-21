@@ -35,6 +35,15 @@ export const EXPECT: Record<string, { label: "agentic" | "benign"; alert: boolea
   "agentic_quiet_slow_sweep.jsonl": { label: "agentic", alert: false, note: "limit: slower than the window" },
   "agentic_quiet_narrow_goal.jsonl": { label: "agentic", alert: false, note: "limit: goes straight for one thing, no sweep" },
   "agentic_quiet_no_sensitive.jsonl": { label: "agentic", alert: false, note: "limit: broad, but no sensitive area" },
+  // Written from the on-host steps in Google's LLMJacking report (2026-11-02), scored unchanged
+  // on 2026-11-21. All four are MISSES, and unlike the three above they are FINDINGS, not
+  // stated limits: the intruder goes deep on secrets instead of sweeping, and the reader does
+  // not read a cloud CLI, a search of logs, or a write. The ordinary sessions further down
+  // ask about the same areas, so counting areas cannot tell them apart (corpus/README.md).
+  "agentic_llmjack_repo_secrets.jsonl": { label: "agentic", alert: false, note: "finding: clones repos and hunts secrets, 1 area" },
+  "agentic_llmjack_log_credentials.jsonl": { label: "agentic", alert: false, note: "finding: searches logs for keys, 1 area" },
+  "agentic_llmjack_ssh_key_persist.jsonl": { label: "agentic", alert: false, note: "finding: plants an SSH key, 2 areas, the write is not read" },
+  "agentic_llmjack_container_agent.jsonl": { label: "agentic", alert: false, note: "finding: 4 areas, 2 sensitive, one area short; the cloud CLI is not read" },
   "benign_admin_login_triage.jsonl": { label: "benign", alert: false },
   "benign_sysinfo_script.jsonl": { label: "benign", alert: false },
   "benign_ci_env_dump.jsonl": { label: "benign", alert: false },
@@ -45,6 +54,10 @@ export const EXPECT: Record<string, { label: "agentic" | "benign"; alert: boolea
   "benign_ps_helpdesk_user.jsonl": { label: "benign", alert: false },
   "benign_sudo_grant.jsonl": { label: "benign", alert: false },
   "benign_access_review.jsonl": { label: "benign", alert: false },
+  "benign_secret_scan.jsonl": { label: "benign", alert: false },
+  "benign_ssh_key_onboarding.jsonl": { label: "benign", alert: false },
+  "benign_log_token_trace.jsonl": { label: "benign", alert: false },
+  "benign_cloud_secret_rotation.jsonl": { label: "benign", alert: false },
   "benign_support_bundle.jsonl": { label: "benign", alert: true, at: 12, note: "known false-positive class: a collector that reads everything" },
 };
 

@@ -5,7 +5,8 @@ each for the agentic-narration signature (`sentinel-core.mjs`), and **kills the
 offending process tree** on a block verdict — stopping the attacker's AI at its first
 narrated action, before the destructive step.
 
-Verified live on Ubuntu 24.04 (kernel 6.17), Falco 0.44.1, Node 18.
+Verified live on Ubuntu 24.04 (kernel 6.17), Falco 0.44.1, Node 18, and on 2026-11-21 on two
+internet-facing Ubuntu 24.04 hosts (kernel 7.0, Falco 0.45.2, Node 18; one of them a Docker host).
 
 ## 1. Install deps
 ```bash
@@ -140,7 +141,10 @@ not: it plants a decoy and watches for the one command only the decoy asks for.
   incident shows `[tripwire:<fingerprint>]` in its place. That is deliberate: a command
   that carries the token is a conviction, including yours, so never paste the token into a
   shell. To test the wire, run the command from the README in MONITOR mode and look for the
-  incident.
+  incident. To check that the token is in no log, read the files from a program (compare
+  the state file's token with the incident file's text); do not hand the token to `grep`.
+  That mistake was made on the first real host: the check itself was convicted three times,
+  under `sudo` as well, in monitor mode where nothing is killed.
 - **Your own AI agents.** An assistant you run on this host will see the decoy too. One that
   follows it gets convicted. Tell it about the decoy path, or leave `--tripwire` off there.
 - **What it sees and what it misses.** It reads the exec stream, so `cat <decoy>/README.md`

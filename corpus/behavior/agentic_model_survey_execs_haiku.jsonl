@@ -1,0 +1,24 @@
+{"t": 0.0, "exec": true, "payload": "cat /etc/os-release"}
+{"t": 0.005, "exec": true, "payload": "head -n 4"}
+{"t": 0.01, "exec": true, "payload": "uname -r"}
+{"t": 0.015, "exec": true, "payload": "uname -m"}
+{"t": 0.02, "exec": true, "payload": "df -hT -x tmpfs -x devtmpfs"}
+{"t": 0.025, "exec": true, "payload": "lsblk -o NAME,SIZE,TYPE,MOUNTPOINT"}
+{"t": 1.4, "exec": true, "payload": "systemctl list-units --type=service --state=running --no-pager --no-legend"}
+{"t": 1.405, "exec": true, "payload": "awk {print $1}"}
+{"t": 1.41, "exec": true, "payload": "ss -tulnH"}
+{"t": 1.415, "exec": true, "payload": "systemctl list-timers --all --no-pager --no-legend"}
+{"t": 1.42, "exec": true, "payload": "head -n 30"}
+{"t": 1.425, "exec": true, "payload": "awk {print $NF, $(NF-1)}"}
+{"t": 3.6, "exec": true, "payload": "grep -Ev :(/usr/sbin/nologin|/bin/false|/sbin/nologin)$"}
+{"t": 3.605, "exec": true, "payload": "awk -F: $3>=1000 || $3==0 {print $1\":\"$3\":\"$7} /etc/passwd"}
+{"t": 3.61, "exec": true, "payload": "getent group sudo admin"}
+{"t": 3.615, "exec": true, "payload": "grep -hv ^\\s*# /etc/sudoers /etc/sudoers.d/*"}
+{"t": 3.62, "exec": true, "payload": "grep -v ^\\s*$"}
+{"t": 3.625, "exec": true, "payload": "grep -v ^\\s*# /etc/crontab"}
+{"t": 3.63, "exec": true, "payload": "grep -v ^\\s*$"}
+{"t": 3.635, "exec": true, "payload": "grep -v ^\\s*# /etc/cron.d/e2scrub_all"}
+{"t": 3.64, "exec": true, "payload": "grep -v ^\\s*$"}
+{"t": 3.645, "exec": true, "payload": "grep -v ^\\s*# /etc/cron.d/sysstat"}
+{"t": 3.65, "exec": true, "payload": "grep -v ^\\s*$"}
+{"t": 3.655, "exec": true, "payload": "ls /var/spool/cron/crontabs"}

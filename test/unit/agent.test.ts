@@ -711,6 +711,30 @@ describe("session behavior through the agent (--behavior)", () => {
     expect(await agent.handleEvent(run("ls -la /srv", sid).f)).toMatchObject({ decision: "allow" });
   });
 
+  // Found live (2026-11-21): what the sensor hands the agent is one process's command line,
+  // quotes gone. The agent says so to the core, which then cuts nothing inside it.
+  test("an exec is read as one command: an awk program's `||` does not hide the file it reads", async () => {
+    arm({ enforce: false, killSession: false });
+    const sid = 995901;
+    const survey = ["cat /etc/os-release", "df -hT", "ss -tulnp", "systemctl list-units --type=service", `awk -F: $3>=1000 || $3==0 {print $1":"$3":"$7} /etc/passwd`, "getent group sudo admin"];
+    for (const c of survey) await agent.handleEvent(run(c, sid).f);
+    expect(agent.deps.behavior!.peek(`sid:${sid}`).sensitive).toEqual(["accounts", "privilege"]);
+    const incs = mine(sid);
+    expect(incs.length).toBe(1);
+    expect(incs[0]).toMatchObject({ decision: "alert", cmdline: "getent group sudo admin", signals: ["behavior_sweep"] });
+  });
+
+  test("an exec whose argument only mentions commands is not counted as running them", async () => {
+    arm({ enforce: false, killSession: false });
+    const sid = 995902;
+    const d = await agent.handleEvent(run("git commit -m docs: the audit steps (id; uname -a; ps aux; cat /etc/passwd; sudo -l) and what each shows", sid).f);
+    expect(d).toMatchObject({ decision: "allow" });
+    expect(agent.deps.behavior!.peek(`sid:${sid}`).categories).toEqual([]);
+    // a shell handed that same text as a script does run it, and is read that way
+    await agent.handleEvent(run("bash -c id; uname -a; ps aux; cat /etc/passwd; sudo -l", sid, { "proc.exe": "/usr/bin/bash" }).f);
+    expect(mine(sid).map((i) => i.signals)).toEqual([["behavior_sweep"]]);
+  });
+
   // Found live (2026-11-21): a new SSH connection per command is a new session per command.
   // The agent finds where a session came from in /proc; the rule that groups them is the core's.
   const sshOrigin = (client: string, login = "ops") => {

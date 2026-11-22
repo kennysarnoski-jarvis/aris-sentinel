@@ -516,7 +516,8 @@ export const sessionKeyOf = (f) => {
 // `tripwire` is this host's matcher once main() has armed it (null otherwise); `behavior`
 // is the session-behavior tracker once main() has turned it on (null otherwise).
 export const deps = {
-  decide: (payload, sessionKey, ctx = {}) => decideSession(sessionKey, payload, { tripwire: deps.tripwire, cwd: ctx.cwd, behavior: deps.behavior, command: ctx.command, origin: ctx.origin }),
+  // `exec: true`: what this agent reads for behavior is always one process's command line.
+  decide: (payload, sessionKey, ctx = {}) => decideSession(sessionKey, payload, { tripwire: deps.tripwire, cwd: ctx.cwd, behavior: deps.behavior, command: ctx.command, exec: true, origin: ctx.origin }),
   tripwire: null,
   behavior: null,
   mode: { enforce: ENFORCE, killSession: ENFORCE && KILL_SESSION },
@@ -591,7 +592,7 @@ export async function handleEvent(f) {
   if (d.decision === "block" || d.decision === "alert") return respond(f, d, payload);
   // With --behavior the verbose line also says which areas of the host the command asked
   // about, so an operator can see what a session's window holds before it is ever reported.
-  if (VERBOSE) log(`allow  tier-${d.tier}  pid=${pid} sid=${f["proc.sid"]} exe=${basename(f["proc.exe"] || "")}  score=${d.score.toFixed(2)}${deps.behavior ? `  areas=[${behaviorCategories(f["proc.cmdline"] || "").join(",")}]` : ""}  ${d.reason}`);
+  if (VERBOSE) log(`allow  tier-${d.tier}  pid=${pid} sid=${f["proc.sid"]} exe=${basename(f["proc.exe"] || "")}  score=${d.score.toFixed(2)}${deps.behavior ? `  areas=[${behaviorCategories(f["proc.cmdline"] || "", { exec: true }).join(",")}]` : ""}  ${d.reason}`);
   return d;
 }
 

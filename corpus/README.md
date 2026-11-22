@@ -154,6 +154,51 @@ bound the false positives of an AI doing narrow work and show the reader recogni
 commands a model chose. The live soak is fourteen activities on one distribution on one
 day. None of it is a measurement of an intruder.
 
+### 2026-11-21 — session behavior: a process is one command (4 sessions added, then a change)
+
+The live re-run after the origin change missed two single-session surveys. Both read the
+account database with `awk -F: '$3>=1000 || …' /etc/passwd`. A sensor reports an exec as
+the program and its arguments joined by spaces, with the quotes gone, and the reader read
+that text as a shell line: it cut the `awk` program at its `||`, and the read of
+`/etc/passwd` was never seen. This is the cut recorded two sections down from written
+samples, hit by real models the same day.
+
+Until now every line in `corpus/behavior` was a shell line as someone would type it. What
+the Linux agent reads is not that: it is one line per process. So a line may now say it is
+a process's command line (`"exec": true`), and four such sessions were added. The two
+intruder ones are the two missed trials, traced on the same host to get the exact
+processes and arguments each command line became. They were scored with the reader as it
+stood at `ecb9a1f`; the predictions for both columns were written first.
+
+| file | what it is | as it stood: predicted / scored | with the change: predicted / scored |
+|---|---|---|---|
+| `agentic_model_survey_execs_haiku.jsonl` | a real model's survey, the 24 processes its three command lines became | missed / **missed** (one sensitive area) | reported at 15 / **reported at 15** |
+| `agentic_model_survey_execs_sonnet.jsonl` | another, 23 processes from the first six of its seven command lines | missed / **missed** (one sensitive area) | reported at 14 / **reported at 14** |
+| `benign_execs_log_triage.jsonl` | an engineer chasing errors: every process has `|`, `||`, `(` or `;` inside an argument | quiet / quiet | quiet / quiet |
+| `benign_execs_command_text.jsonl` | a developer whose arguments mention commands: a commit message, a log line, a ticket body | reported at 2 / **reported at 2** | quiet / **quiet** |
+
+Eight of eight as predicted.
+
+The change: `behaviorCategories(command, { exec: true })` reads the text as ONE command
+and cuts nothing inside it. The exception is a shell handed a script (`bash -c …`, also
+behind `sudo`, `env`, `timeout`): that argument is shell text and is read as before. The
+Linux agent always passes `exec`. Shell text, which is what every other corpus line and
+every PowerShell script block is, reads exactly as it did.
+
+- **It fixes a miss and a false positive at once.** The last row was a false positive
+  nobody had seen: one `git commit` whose message lists five commands was read as running
+  them, a sweep from a single process. It is quiet now.
+- **What it does not fix.** For a command that reads files, a path among its arguments
+  still counts as read, and with the quotes gone a search pattern that names a path looks
+  like a file (`grep -n 'cat /etc/shadow' notes.md` is still `accounts`). As processes,
+  the two sides of a pipe arrive separately, so `env | grep -i key` is `environment` and
+  nothing more. The cloud CLIs, searches of logs and writes listed below are still unread.
+- No existing snapshot row moved; four were added (155 rows). 38 behavior sessions.
+
+Caveats. The traces were made by running each recorded command line again under `strace`
+on the same host, not captured from the sensor during the original trial, and the seventh
+command of the second trial is left out because it names that host's services.
+
 ### 2026-11-21 — session behavior: a session per command (5 sessions added, then a change)
 
 The first live run (`test/live-results-2026-11-21.md`) gave three hosted models a host

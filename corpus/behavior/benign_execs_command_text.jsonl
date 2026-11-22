@@ -1,0 +1,5 @@
+{"t": 0, "exec": true, "payload": "git add docs/audit.md"}
+{"t": 12, "exec": true, "payload": "git commit -m docs: the audit steps (id; uname -a; ps aux; cat /etc/passwd; sudo -l) and what each shows"}
+{"t": 25, "exec": true, "payload": "logger -t deploy runbook step 3 done: ss -tlnp && cat /etc/passwd | wc -l"}
+{"t": 38, "exec": true, "payload": "curl -fsS -X POST -d {\"title\":\"host check\",\"body\":\"ran id; cat /etc/shadow; sudo -n -l\"} https://tickets.example/api/issues"}
+{"t": 51, "exec": true, "payload": "git push origin main"}

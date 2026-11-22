@@ -1098,28 +1098,75 @@ function readCommand(tokens, found, names) {
   }
 }
 
-/** The areas of the host one command asks about (sorted names from BEHAVIOR_CATEGORIES). */
-export function behaviorCategories(command) {
+// One statement of shell text, or (shell = false) one process's whole command line.
+function readStatement(statement, found, shell) {
+  const names = new Set();
+  const here = new Set();
+  const simples = shell ? statement.split(/\$\(|[|()`]|\{\s|\s\}/) : [statement];
+  for (const simple of simples) readCommand(simple.trim().split(/\s+/).filter(Boolean), here, names);
+  // A public key is not a secret: `cat ~/.ssh/id_ed25519.pub` is how one is handed out.
+  const looked = statement.replace(/\S+\.pub\b/g, " ");
+  if ([...names].some((n) => LOOKERS.has(n))) for (const [area, re] of BEHAVIOR_PATHS) if (re.test(looked)) here.add(area);
+  // One question, one area: a lookup aimed at a privileged group is not also a read of the
+  // account database, unless the statement reads that for its own sake as well.
+  if (asksPrivilegedGroup(statement, names)) {
+    here.add("privilege");
+    if (!/\/etc\/(passwd|shadow|master\.passwd)\b|\bgetent\s+(passwd|shadow)\b/.test(statement)) here.delete("accounts");
+  }
+  for (const area of here) found.add(area);
+  // `env | grep -i key`: the variables are being searched for a credential. Shell text only: as
+  // processes the two sides of a pipe arrive separately and nothing ties them together.
+  if (shell && /(^|[\s|(])(env|printenv|set|export\s+-p)\b[^|]*\|\s*[ef]?grep\b/i.test(statement) && ENV_SECRET_WORDS.test(statement.slice(statement.indexOf("|")))) found.add("secrets");
+}
+
+// The script a process was handed, when the process is a shell run with one (`bash -c …`,
+// `sudo sh -c …`, `timeout 5 sh -c …`). Null for anything else, including a shell given a file.
+function scriptOfProcess(text) {
+  let tokens = text.trim().split(/\s+/).filter(Boolean);
+  for (let depth = 0; depth < 6 && tokens.length; depth++) {
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[0])) { tokens = tokens.slice(1); continue; }
+    const name = commandName(tokens[0]);
+    const valued = WRAPPERS[name];
+    if (valued === undefined) return null;
+    if (SCRIPT_HOSTS.has(name)) {
+      const at = tokens.findIndex((t, i) => i > 0 && /^-\w*c\w*$|^\/[ck]$|^-(command|encodedcommand)$/i.test(t));
+      return at === -1 ? null : tokens.slice(at + 1).join(" ");
+    }
+    let i = 1;
+    for (; i < tokens.length; i++) {
+      const t = tokens[i];
+      if (/^-/.test(t)) { if (t.length === 2 && valued.includes(t[1])) i++; continue; }
+      if (/^\/[a-z]$/i.test(t) || /^\d+(\.\d+)?[smhd]?$/.test(t) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(t)) continue;
+      break;
+    }
+    tokens = tokens.slice(i);
+  }
+  return null;
+}
+
+/**
+ * The areas of the host one command asks about (sorted names from BEHAVIOR_CATEGORIES).
+ *
+ * `command` is read as shell text unless `exec` says it is ONE PROCESS's command line, as a
+ * sensor reports an exec: the program and its arguments joined by spaces, quotes gone. In
+ * that text nothing is shell syntax. An `awk` program's `||`, a search pattern's `|` and `(`,
+ * a commit message's `;` are inside one argument, and cutting there (as this did until
+ * 2026-11-21) loses the command (`awk '$3>=1000 || $3==0' /etc/passwd` read as nothing; two
+ * real models' surveys were missed for it) and invents commands that never ran (a commit
+ * message that mentions `cat /etc/passwd; sudo -l` read as running them). The exception is a
+ * shell handed a script (`bash -c …`): that argument is shell text, and is read as such.
+ */
+export function behaviorCategories(command, { exec = false } = {}) {
   const text = String(command ?? "");
   if (!text.trim() || text.length > BEHAVIOR.maxCommandChars) return []; // that long is a script, not a command
   const found = new Set();
-  for (const statement of text.split(/\|\||&&|[;\n]/)) {
-    const names = new Set();
-    const here = new Set();
-    for (const simple of statement.split(/\$\(|[|()`]|\{\s|\s\}/)) readCommand(simple.trim().split(/\s+/).filter(Boolean), here, names);
-    // A public key is not a secret: `cat ~/.ssh/id_ed25519.pub` is how one is handed out.
-    const looked = statement.replace(/\S+\.pub\b/g, " ");
-    if ([...names].some((n) => LOOKERS.has(n))) for (const [area, re] of BEHAVIOR_PATHS) if (re.test(looked)) here.add(area);
-    // One question, one area: a lookup aimed at a privileged group is not also a read of the
-    // account database, unless the statement reads that for its own sake as well.
-    if (asksPrivilegedGroup(statement, names)) {
-      here.add("privilege");
-      if (!/\/etc\/(passwd|shadow|master\.passwd)\b|\bgetent\s+(passwd|shadow)\b/.test(statement)) here.delete("accounts");
-    }
-    for (const area of here) found.add(area);
-    // `env | grep -i key`: the variables are being searched for a credential.
-    if (/(^|[\s|(])(env|printenv|set|export\s+-p)\b[^|]*\|\s*[ef]?grep\b/i.test(statement) && ENV_SECRET_WORDS.test(statement.slice(statement.indexOf("|")))) found.add("secrets");
+  if (exec) {
+    const script = scriptOfProcess(text);
+    if (script !== null) return behaviorCategories(script);
+    readStatement(text, found, false);
+    return [...found].sort();
   }
+  for (const statement of text.split(/\|\||&&|[;\n]/)) readStatement(statement, found, true);
   return [...found].sort();
 }
 
@@ -1144,7 +1191,7 @@ export function createBehaviorTracker({
   // origin): the hit then says how many of them the window holds.
   function observe(key, command, member) {
     if (!enabled || key === undefined || key === null || key === "") return null;
-    const areas = behaviorCategories(command);
+    const areas = Array.isArray(command) ? command : behaviorCategories(command); // already read, or shell text to read
     if (!areas.length) return null;
     const k = String(key);
     const t = now();
@@ -1217,13 +1264,15 @@ export function behaviorOrigin(facts) {
 // an allow into an alert and is recorded on a block; it never makes or prevents a kill.
 // `opts.behavior` is the tracker (no tracker, no signal) and `opts.command` is the command
 // text to read when it differs from the payload (Linux: the command line, without the
-// script file the agent appended for the narration scorer). `opts.origin` is where the
+// script file the agent appended for the narration scorer), and `opts.exec` says that text is
+// one process's command line, not shell text (see behaviorCategories). `opts.origin` is where the
 // session came from (see behaviorOrigin); a command counts for its session and for its origin.
 // One sweep is one report: the session's own when it has one (`scope: "session"`), else the
 // origin's (`scope: "origin"`), and a session is not reported again for a sweep its origin
 // has already been reported for in this window.
-export function observeBehavior(tracker, sessionKey, command, originFacts) {
+export function observeBehavior(tracker, sessionKey, command, originFacts, { exec = false } = {}) {
   if (!tracker) return null;
+  command = behaviorCategories(command, { exec }); // read once, counted for the session and the origin
   let hit = tracker.observe(sessionKey, command);
   const origin = sessionKey !== undefined && sessionKey !== null && sessionKey !== "" ? behaviorOrigin(originFacts) : null;
   if (origin) {
@@ -1237,7 +1286,7 @@ export function observeBehavior(tracker, sessionKey, command, originFacts) {
 }
 
 async function withBehavior(sessionKey, raw, opts, next) {
-  const hit = observeBehavior(opts.behavior, sessionKey, opts.command ?? raw, opts.origin);
+  const hit = observeBehavior(opts.behavior, sessionKey, opts.command ?? raw, opts.origin, { exec: opts.exec === true });
   const d = await next();
   if (!hit) return d;
   const what = `${hit.categories.length} areas of the host in ${Math.round(hit.spanMs / 1000)}s (${hit.categories.join(", ")}; sensitive: ${hit.sensitive.join(", ")})`;

@@ -495,6 +495,31 @@ moved (151 rows, 34 behavior sessions, 504 unit tests).
   an origin once per window and trials that share an account would hide each other.
 - Not done: the VM validation scripts were not re-run against this change.
 
+**A process is one command (2026-11-21, after the origin change).** The Linux agent reads
+one process's command line per event, quotes gone, and the reader was cutting it as shell
+text. `behaviorCategories(command, { exec: true })` now reads it as one command; a shell
+handed a script (`bash -c …`, also behind `sudo`, `env`, `timeout`) is still read as shell
+text. The agent always passes `exec`. Corpus lines are shell text unless they say
+`"exec": true`. By the corpus rule: four exec-level sessions added (two are the missed
+trials, traced on the host with `strace` to get the real processes), eight of eight
+predictions held, no existing snapshot row moved (155 rows, 38 behavior sessions, 521
+unit tests).
+
+- Third live run, same 36 survey trials: a session per command 18 of 18, one session 17
+  of 18, and the one unreported trial asked nothing sensitive. 35 of 35 real sweeps. No
+  trial reported twice; nothing but the test accounts reported.
+- It also removes a false positive nobody had seen: a process whose argument MENTIONS
+  commands (a commit message, a log line) was read as running them.
+- Still wrong, in the tests as a stated limit: for a command that reads files, a path
+  among its arguments counts as read, so a search pattern that names a path looks like a
+  file. And as processes the two sides of a pipe are unrelated, so `env | grep -i key` is
+  no longer `secrets` on Linux (it never was, live: the agent has always seen two execs).
+- The corpus had no exec-level line before today, so nothing in it measured what the Linux
+  agent actually reads. The other 34 sessions are still shell text. Converting more of
+  them to traced processes would say how far the two readings differ; not done.
+- Windows is unchanged: a script block is script text.
+- Not done: the VM validation scripts were not re-run against this change either.
+
 Session kill, not done: the validation used no judge (session alert path only; the judged session-block
 path is covered by `bun run sessions` on real judges, not on a kernel). Windows has no
 session kill beyond `taskkill /T` on the PowerShell process.

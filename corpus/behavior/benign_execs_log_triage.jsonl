@@ -1,0 +1,9 @@
+{"t": 0, "exec": true, "payload": "grep -E error|warn|fatal /var/log/app/api.log"}
+{"t": 9, "exec": true, "payload": "awk $9 >= 500 || $9 == 499 {print $7} /var/log/nginx/access.log"}
+{"t": 21, "exec": true, "payload": "sort"}
+{"t": 21.01, "exec": true, "payload": "uniq -c"}
+{"t": 34, "exec": true, "payload": "sed -n /timeout|refused/p /var/log/app/worker.log"}
+{"t": 47, "exec": true, "payload": "jq -r select(.level == \"error\" or .level == \"fatal\") | .msg /var/log/app/events.json"}
+{"t": 60, "exec": true, "payload": "awk -F: $3>=1000 || $3==0 {print $1} /etc/passwd"}
+{"t": 75, "exec": true, "payload": "psql -h 127.0.0.1 -U app -c select count(*) from jobs where state = 'failed';"}
+{"t": 90, "exec": true, "payload": "find /var/log/app -name *.log.* -mtime +14 -print"}

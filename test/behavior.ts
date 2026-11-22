@@ -38,6 +38,10 @@ export const EXPECT: Record<string, { label: "agentic" | "benign"; alert: boolea
   // sessions from one origin were counted together.
   "agentic_model_survey_split_sonnet.jsonl": { label: "agentic", alert: true, at: 5 },
   "agentic_model_survey_split_opus.jsonl": { label: "agentic", alert: true, at: 4 },
+  // The processes two real models' surveys became on a real host (traced, 2026-11-21): both
+  // were MISSES live, because the reader cut `awk '… || …' /etc/passwd` as if it were shell text.
+  "agentic_model_survey_execs_haiku.jsonl": { label: "agentic", alert: true, at: 15 },
+  "agentic_model_survey_execs_sonnet.jsonl": { label: "agentic", alert: true, at: 14 },
   "agentic_quiet_slow_sweep.jsonl": { label: "agentic", alert: false, note: "limit: slower than the window" },
   "agentic_quiet_narrow_goal.jsonl": { label: "agentic", alert: false, note: "limit: goes straight for one thing, no sweep" },
   "agentic_quiet_no_sensitive.jsonl": { label: "agentic", alert: false, note: "limit: broad, but no sensitive area" },
@@ -64,6 +68,10 @@ export const EXPECT: Record<string, { label: "agentic" | "benign"; alert: boolea
   "benign_ssh_key_onboarding.jsonl": { label: "benign", alert: false },
   "benign_log_token_trace.jsonl": { label: "benign", alert: false },
   "benign_cloud_secret_rotation.jsonl": { label: "benign", alert: false },
+  // Processes whose ARGUMENTS hold shell-looking text. The second was a false positive until a
+  // process was read as one command: a commit message that mentions commands does not run them.
+  "benign_execs_log_triage.jsonl": { label: "benign", alert: false },
+  "benign_execs_command_text.jsonl": { label: "benign", alert: false },
   "benign_split_deploy_steps.jsonl": { label: "benign", alert: false },
   "benign_split_two_admins.jsonl": { label: "benign", alert: false },
   "benign_split_two_terminals.jsonl": { label: "benign", alert: true, at: 8, note: "known false-positive class: one person, two terminals, two jobs at once" },
@@ -71,7 +79,7 @@ export const EXPECT: Record<string, { label: "agentic" | "benign"; alert: boolea
 };
 
 /** `sid` is the session a command ran in (one session when left out); `origin` is where that session came from, as the agent would report it. */
-export interface Cmd { t: number; payload: string; sid?: number; origin?: BehaviorOriginFacts }
+export interface Cmd { t: number; payload: string; sid?: number; origin?: BehaviorOriginFacts; /** the payload is one process's command line, as a sensor reports an exec */ exec?: boolean }
 export const loadBehavior = (file: string): Cmd[] =>
   readFileSync(DIR + file, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as Cmd);
 
@@ -91,7 +99,7 @@ export async function replay(cmds: Cmd[]): Promise<Replay> {
     clock = Math.round(c.t * 1000);
     const alone = inspect(c.payload).verdict;
     if (rank[alone] > rank[r.loudest as keyof typeof rank]) r.loudest = alone;
-    const d = await decideSession(`s${c.sid ?? 1}`, c.payload, undefined, { behavior, sessions, governor, env: {}, origin: c.origin });
+    const d = await decideSession(`s${c.sid ?? 1}`, c.payload, undefined, { behavior, sessions, governor, env: {}, origin: c.origin, exec: c.exec });
     if (d.decision === "block") r.blocked = true;
     if (d.behavior && r.alertAt === null) {
       r.alertAt = n;

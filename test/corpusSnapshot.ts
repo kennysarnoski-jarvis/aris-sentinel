@@ -67,14 +67,14 @@ export interface BehaviorRow {
 
 // The behavior half of decideSession(), replayed on the session's own clock. A line may name
 // the session it ran in (`sid`) and where that session came from (`origin`).
-function behaviorRow(cmds: { t: number; payload: string; sid?: number; origin?: BehaviorOriginFacts }[]): BehaviorRow {
+function behaviorRow(cmds: { t: number; payload: string; sid?: number; origin?: BehaviorOriginFacts; exec?: boolean }[]): BehaviorRow {
   let clock = 0;
   const tracker = createBehaviorTracker({ now: () => clock });
   let sweepAt: number | null = null;
   const areas = cmds.map((c, i) => {
     clock = Math.round(c.t * 1000);
-    if (observeBehavior(tracker, `s${c.sid ?? 1}`, c.payload, c.origin) && sweepAt === null) sweepAt = i + 1;
-    return behaviorCategories(c.payload).join(",") || "-";
+    if (observeBehavior(tracker, `s${c.sid ?? 1}`, c.payload, c.origin, { exec: c.exec }) && sweepAt === null) sweepAt = i + 1;
+    return behaviorCategories(c.payload, { exec: c.exec }).join(",") || "-";
   });
   return { areas, sweepAt };
 }

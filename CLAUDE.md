@@ -17,12 +17,12 @@ change and the result recorded in corpus/README.md (see its rules).
 - `bun run score <file>`: score a file the way the agent would (verdict, signals, evidence)
 - `bun run test:all`: everything below in one go
 - `bun run test`: tier-1 corpus (expect precision 1.00, tier-1 recall 0.61, pipeline-reachable recall 1.00, FP=0)
-- `bun test`: unit tests (expect 504 pass)
+- `bun test`: unit tests (expect 521 pass)
 - `bun run typecheck`: tsc over detector/ and test/ (expect clean)
 - `bun run windows`: PowerShell corpus (expect 10/10)
 - `bun run pipeline:stub`: two-tier routing (expect 6/6)
 - `bun run sessions:stub`: session evidence routing over corpus/sessions (expect 11/11)
-- `bun run behavior`: session behavior over corpus/behavior (expect 34/34)
+- `bun run behavior`: session behavior over corpus/behavior (expect 38/38)
 - `bun run score --session <files|x.jsonl>`: score inputs as ONE session (also shows the areas each command asks about and where the session becomes a sweep)
 - `bun run selftest` and `bun run win:mock`: agent smoke tests
 
@@ -90,6 +90,12 @@ samples were scored; change one only by the corpus rule (score first, record it,
 A lookup aimed at the `sudo`, `wheel` or `admin` group (`getent group sudo`, `grep '^sudo:'
 /etc/group`) is `privilege` ONLY, not also `accounts`: counted as both, one command supplies
 both sensitive areas (measured in corpus/README.md, 2026-11-11). Do not "simplify" it to both.
+What the Linux agent reads is ONE PROCESS's command line (program and arguments joined by
+spaces, quotes gone), so it passes `exec: true` and `behaviorCategories` cuts nothing
+inside it; only a shell handed a script (`bash -c …`) is read as shell text. Corpus lines
+are shell text unless they say `"exec": true`. Never go back to cutting an exec at `|`,
+`||`, `(` or `;`: two real models' surveys were missed for it and a commit message that
+mentions commands was reported as a sweep (corpus/README.md, 2026-11-21).
 A command counts for its session AND for its ORIGIN (`behaviorOrigin`, `observeBehavior`):
 today an origin is the SSH logins of one account from one client address, found by the
 Linux agent in `/proc` (`originOf`: the chain to init, `loginuid`, `SSH_CONNECTION`). It

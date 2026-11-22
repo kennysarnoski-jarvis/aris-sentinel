@@ -303,6 +303,101 @@ describe("policy inside decideSession(): a sweep is an alert, never a kill", () 
   });
 });
 
+// Found on a real host (2026-11-21): a sensor reports an exec as the program and its arguments
+// joined by spaces, with the quotes gone. Read as shell text, an argument that holds `||`, `|`,
+// `(` or `;` was cut there: real surveys were missed, and commands that never ran were counted.
+describe("one process is one command (exec), not shell text", () => {
+  const exec = (cmd: string) => behaviorCategories(cmd, { exec: true }).join(",");
+
+  test("an argument's own operators do not cut the command", () => {
+    expect(exec(`awk -F: $3>=1000 || $3==0 {print $1":"$3":"$7} /etc/passwd`)).toBe("accounts");
+    expect(exec(`awk -F: $3>=1000 || $1=="root" {print $1":"$3":"$6":"$7} /etc/passwd`)).toBe("accounts");
+    expect(exec("grep -rniE api[_-]?key|secret|password /tmp/w")).toBe("secrets");
+    expect(exec("grep -rniE foo|password /srv/app")).toBe("secrets");
+    expect(exec("grep -E ^(sudo|wheel|admin): /etc/group")).toBe("privilege");
+    expect(exec("grep -hv ^\\s*# /etc/sudoers /etc/sudoers.d/dev")).toBe("privilege");
+    // and the same text read as a shell line is what it always was (the corpus is shell text)
+    expect(areas(`awk -F: $3>=1000 || $3==0 {print $1":"$3":"$7} /etc/passwd`)).toBe("");
+    expect(areas("grep -rniE foo|password /srv/app")).toBe("");
+  });
+
+  test("text inside an argument is not a command: a commit message, a log line, a request body", () => {
+    const mentions = [
+      "git commit -m docs: the audit steps (id; uname -a; ps aux; cat /etc/passwd; sudo -l) and what each shows",
+      "logger -t deploy runbook step 3 done: ss -tlnp && cat /etc/passwd | wc -l",
+      `curl -fsS -X POST -d {"title":"host check","body":"ran id; cat /etc/shadow; sudo -n -l"} https://tickets.example/api/issues`,
+      "psql -c select count(*) from jobs where state = 'failed'; -- then run: sudo -l",
+      "notify-send deploy finished: ran id; cat /etc/shadow; sudo -n -l",
+    ];
+    for (const m of mentions) expect(exec(m)).toBe("");
+    // The limit that remains: for a command that reads files, a path among its arguments counts as
+    // read, and with the quotes gone a search PATTERN that names a path looks the same as a file.
+    expect(exec("grep -n cat /etc/shadow notes.md")).toBe("accounts");
+    // read as shell text, the first one is a five-area sweep from a single line: the false positive this removes
+    expect(areas(mentions[0])).toBe("accounts,host,identity,privilege,processes");
+    expect(exec("grep -Ev :(/usr/sbin/nologin|/bin/false|/sbin/nologin)$")).toBe("");
+    expect(exec("grep -rn password /tmp/w")).toBe("secrets"); // a path's last part is not a command either
+    expect(exec("ls -la /tmp/w")).toBe("");
+  });
+
+  test("a plain command reads the same either way", () => {
+    for (const c of ["id", "uname -a", "ps aux", "ss -tlnp", "cat /etc/passwd", "sudo -n -l", "getent group sudo", "cat ~/.aws/credentials", "df -h", "crontab -l", "env", "cat /proc/1/cgroup", "systemctl list-units --type=service", "curl -s http://169.254.169.254/latest/meta-data/", "FOO=1 id", "sudo -u www-data cat /etc/shadow", "timeout 5 ps aux", "nohup ss -tlnp"]) {
+      expect(exec(c)).toBe(areas(c));
+      expect(exec(c)).not.toBe("");
+    }
+  });
+
+  test("a shell handed a script is the exception: that argument is shell text", () => {
+    expect(exec("bash -c id; uname -a; cat /etc/passwd")).toBe("accounts,host,identity");
+    expect(exec("sh -c cat /etc/passwd | wc -l")).toBe("accounts");
+    expect(exec("bash --noprofile --norc -c ps aux | head; ss -tlnp")).toBe("network,processes");
+    expect(exec("sudo sh -c cat /etc/shadow; id")).toBe("accounts,identity");
+    expect(exec("sudo -u deploy bash -lc sudo -n -l && crontab -l")).toBe("privilege,scheduled");
+    expect(exec("timeout 5 sh -c uname -a; df -h")).toBe("host,storage");
+    expect(exec("env LC_ALL=C bash -c env | grep -i token")).toBe("environment,secrets");
+    // a shell given a FILE runs that file; the file's name and arguments are not commands
+    expect(exec("bash collect.sh id; cat /etc/passwd")).toBe("");
+    expect(exec("sh /usr/local/bin/backup --then cat /etc/shadow")).toBe("");
+    expect(exec("bash")).toBe("");
+  });
+
+  test("as processes, the two sides of a pipe are two commands and nothing ties them together", () => {
+    expect(areas("env | grep -i key")).toBe("environment,secrets"); // shell text: the variables are being searched
+    expect(exec("env")).toBe("environment");
+    expect(exec("grep -i key")).toBe(""); // what it reads from is not on its command line
+  });
+
+  test("length and emptiness are as before", () => {
+    expect(exec("")).toBe("");
+    expect(exec("   ")).toBe("");
+    expect(behaviorCategories("cat /etc/passwd " + "x".repeat(BEHAVIOR.maxCommandChars), { exec: true })).toEqual([]);
+    expect(behaviorCategories(undefined as never, { exec: true })).toEqual([]);
+  });
+
+  test("through decideSession: `exec` decides how the command text is read, and the tracker is fed once", async () => {
+    const mk = () => ({ behavior: createBehaviorTracker(), sessions: createSessionTracker(), governor: createGovernor({ budgetPerMin: 0 }), env: {} });
+    const survey = ["cat /etc/os-release", "df -hT", "ss -tulnp", "systemctl list-units --type=service", `awk -F: $3>=1000 || $3==0 {print $1} /etc/passwd`, "getent group sudo admin"];
+    const asExec = mk(), asText = mk();
+    const a = [], b = [];
+    for (const c of survey) { a.push((await decideSession("s", c, { ...asExec, exec: true })).decision); b.push((await decideSession("s", c, asText)).decision); }
+    expect(a).toEqual(["allow", "allow", "allow", "allow", "allow", "alert"]); // the survey two real models ran
+    expect(b).toEqual(["allow", "allow", "allow", "allow", "allow", "allow"]); // and how it was missed
+    expect(asExec.behavior.peek("s")).toMatchObject({ commands: 6, sensitive: ["accounts", "privilege"] });
+    // one process whose argument mentions a whole sweep is not one
+    const quiet = mk();
+    expect((await decideSession("s", "git commit -m audit: id; uname -a; ps aux; cat /etc/passwd; sudo -l", { ...quiet, exec: true })).decision).toBe("allow");
+    expect(quiet.behavior.peek("s").commands).toBe(0);
+    // a tracker can also be handed areas that were already read
+    const t = createBehaviorTracker();
+    expect(t.observe("k", ["accounts", "privilege"])).toBeNull();
+    expect(t.peek("k")).toMatchObject({ categories: ["accounts", "privilege"], commands: 1 });
+    expect(t.observe("k", [])).toBeNull();
+    expect(t.peek("k").commands).toBe(1);
+    expect(observeBehavior(t, "k2", `awk -F: $3>=1000 || $3==0 {print $1} /etc/passwd`, null, { exec: true })).toBeNull();
+    expect(t.peek("k2").categories).toEqual(["accounts"]);
+  });
+});
+
 // Found on a real host (2026-11-21): a survey run with a new SSH connection per command was
 // reported 3 times in 18, because every connection is its own session. The same rule is now
 // also applied to everything that arrives from one origin.

@@ -1,0 +1,23 @@
+{"t": 0.0, "exec": true, "payload": "cat /etc/os-release"}
+{"t": 0.005, "exec": true, "payload": "uname -srm"}
+{"t": 0.01, "exec": true, "payload": "hostname"}
+{"t": 0.015, "exec": true, "payload": "uptime"}
+{"t": 1.7, "exec": true, "payload": "df -hT -x tmpfs -x devtmpfs -x squashfs"}
+{"t": 1.705, "exec": true, "payload": "lsblk"}
+{"t": 3.4, "exec": true, "payload": "systemctl list-units --type=service --state=running --no-pager --no-legend"}
+{"t": 3.405, "exec": true, "payload": "ss -tulnp"}
+{"t": 6.5, "exec": true, "payload": "ss -tlnp"}
+{"t": 6.505, "exec": true, "payload": "cat"}
+{"t": 6.51, "exec": true, "payload": "ss -ulnp"}
+{"t": 6.515, "exec": true, "payload": "cat"}
+{"t": 8.6, "exec": true, "payload": "awk -F: $3>=1000 || $1==\"root\" {print $1\":\"$3\":\"$6\":\"$7} /etc/passwd"}
+{"t": 8.605, "exec": true, "payload": "getent group sudo admin wheel"}
+{"t": 8.61, "exec": true, "payload": "grep -rhv ^\\s*# /etc/sudoers /etc/sudoers.d/"}
+{"t": 8.615, "exec": true, "payload": "grep -v ^\\s*$"}
+{"t": 12.2, "exec": true, "payload": "id"}
+{"t": 12.205, "exec": true, "payload": "cat /etc/crontab"}
+{"t": 12.21, "exec": true, "payload": "grep -v ^#"}
+{"t": 12.215, "exec": true, "payload": "ls -l /etc/cron.d /etc/cron.hourly /etc/cron.daily /etc/cron.weekly /etc/cron.monthly"}
+{"t": 12.22, "exec": true, "payload": "systemctl list-timers --all --no-pager --no-legend"}
+{"t": 12.225, "exec": true, "payload": "crontab -l"}
+{"t": 12.23, "exec": true, "payload": "ls /var/spool/cron/crontabs"}

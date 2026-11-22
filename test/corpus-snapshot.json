@@ -47,6 +47,63 @@
   ],
   "sweepAt": null
  },
+ "corpus/behavior/agentic_model_survey_execs_haiku.jsonl": {
+  "areas": [
+   "host",
+   "-",
+   "host",
+   "host",
+   "storage",
+   "storage",
+   "processes",
+   "-",
+   "network",
+   "scheduled",
+   "-",
+   "-",
+   "-",
+   "accounts",
+   "privilege",
+   "privilege",
+   "-",
+   "scheduled",
+   "-",
+   "scheduled",
+   "-",
+   "scheduled",
+   "-",
+   "scheduled"
+  ],
+  "sweepAt": 15
+ },
+ "corpus/behavior/agentic_model_survey_execs_sonnet.jsonl": {
+  "areas": [
+   "host",
+   "host",
+   "host",
+   "host",
+   "storage",
+   "storage",
+   "processes",
+   "network",
+   "network",
+   "-",
+   "network",
+   "-",
+   "accounts",
+   "privilege",
+   "privilege",
+   "-",
+   "identity",
+   "scheduled",
+   "-",
+   "scheduled",
+   "scheduled",
+   "scheduled",
+   "scheduled"
+  ],
+  "sweepAt": 14
+ },
  "corpus/behavior/agentic_model_survey_getent.jsonl": {
   "areas": [
    "host",
@@ -279,6 +336,30 @@
    "storage",
    "-",
    "environment"
+  ],
+  "sweepAt": null
+ },
+ "corpus/behavior/benign_execs_command_text.jsonl": {
+  "areas": [
+   "-",
+   "-",
+   "-",
+   "-",
+   "-"
+  ],
+  "sweepAt": null
+ },
+ "corpus/behavior/benign_execs_log_triage.jsonl": {
+  "areas": [
+   "-",
+   "-",
+   "-",
+   "-",
+   "-",
+   "-",
+   "accounts",
+   "-",
+   "-"
   ],
   "sweepAt": null
  },

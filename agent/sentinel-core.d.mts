@@ -181,6 +181,8 @@ export interface DecideSessionOptions extends DecideOptions {
   behavior?: BehaviorTracker | null;
   /** the command text to read for behavior when it differs from the payload (Linux: the command line alone) */
   command?: string;
+  /** true when the command text is ONE process's command line (an exec event), not shell text: nothing in it is then cut as shell syntax */
+  exec?: boolean;
   /** where the session came from, as the agent found it; a command counts for its session and for its origin */
   origin?: BehaviorOriginFacts | null;
 }
@@ -220,7 +222,7 @@ export interface BehaviorHit {
 }
 export interface BehaviorTracker {
   /** returns a sweep exactly once, on the command that completes it; `member` names the session when `key` stands for several */
-  observe(key: string | number | null | undefined, command: string, member?: string | number | null): BehaviorHit | null;
+  observe(key: string | number | null | undefined, command: string | BehaviorCategory[], member?: string | number | null): BehaviorHit | null;
   peek(key: string | number): { categories: BehaviorCategory[]; sensitive: BehaviorCategory[]; commands: number; reported: boolean };
   forget(key: string | number): boolean;
   size(): number;
@@ -304,9 +306,10 @@ export function decideSession(sessionKey: string | number | null | undefined, ra
 export const WINDOW_LINES: number;
 export const BEHAVIOR: Readonly<{ categories: number; sensitive: number; windowMs: number; maxCommandChars: number; stepMs: number }>;
 export const BEHAVIOR_CATEGORIES: Readonly<Record<BehaviorCategory, { sensitive: boolean; what: string }>>;
-export function behaviorCategories(command: string): BehaviorCategory[];
+/** `exec: true` reads the text as one process's command line (arguments joined by spaces, quotes gone) instead of shell text */
+export function behaviorCategories(command: string, opts?: { exec?: boolean }): BehaviorCategory[];
 /** the observation half of decideSession's behavior policy: one command counted for its session and for its origin; a sweep is returned once */
-export function observeBehavior(tracker: BehaviorTracker | null | undefined, sessionKey: string | number | null | undefined, command: string, origin?: BehaviorOriginFacts | null): BehaviorHit | null;
+export function observeBehavior(tracker: BehaviorTracker | null | undefined, sessionKey: string | number | null | undefined, command: string, origin?: BehaviorOriginFacts | null, opts?: { exec?: boolean }): BehaviorHit | null;
 /** the origin a session's facts name, or null when it has none that is grouped (only SSH logins are) */
 export function behaviorOrigin(facts?: BehaviorOriginFacts | null): { key: string; what: string } | null;
 export function createBehaviorTracker(opts?: BehaviorTrackerOptions): BehaviorTracker;

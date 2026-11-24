@@ -27,6 +27,8 @@
 //        ARIS_RULES (falco rules path)      FALCO_BIN (default: falco)
 //        ARIS_INCIDENTS (incident log path) ARIS_VERBOSE=1 (log every allow too)
 //        ARIS_CLOUD_URL + ARIS_INGEST_KEY (off-box alerts)
+//        ARIS_JUDGE_URL (the hosted judge, optional; enroll this host once with --enroll-judge)
+//        ARIS_JUDGE_STATE (where this host's judge identity is kept, 0600)
 //        ARIS_FAIL_MODE=alert (page instead of block when tier-2 errors/refuses)
 //        ARIS_TRIPWIRE_STATE (where the tripwire token is kept, 0600)
 //        ARIS_TRIPWIRE_DIRS (comma-separated decoy directories)
@@ -54,7 +56,7 @@ import { basename, isAbsolute, resolve as resolvePath } from "node:path";
 import { hostname } from "node:os";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
-import { armTripwire, BEHAVIOR, behaviorCategories, createBehaviorTracker, createTripwire, decide, decideSession, defaultSessions, disarmTripwire, hasTier2, newTripwireToken, providers, providerWarnings, tripwireDecoy, tripwireLookFromEnv } from "./sentinel-core.mjs";
+import { armTripwire, BEHAVIOR, behaviorCategories, createBehaviorTracker, createTripwire, decide, decideSession, defaultSessions, disarmTripwire, enrollJudge, hasTier2, judgeStateFile, newTripwireToken, providers, providerWarnings, tripwireDecoy, tripwireLookFromEnv } from "./sentinel-core.mjs";
 
 // SAFE BY DEFAULT: the agent detects + alerts + logs but NEVER kills unless you pass
 // --enforce. A false positive can't take down a customer's prod on day one; you flip
@@ -77,6 +79,9 @@ const TRIPWIRE = process.argv.includes("--tripwire");
 const TRIPWIRE_REMOVE = process.argv.includes("--tripwire-remove");
 const TRIPWIRE_STATE = process.env.ARIS_TRIPWIRE_STATE || "/var/lib/aris-sentinel/tripwire.json";
 const TRIPWIRE_DIRS = (process.env.ARIS_TRIPWIRE_DIRS || "").split(",").map((s) => s.trim()).filter(Boolean);
+// JUDGE: the hosted judge is optional. --enroll-judge trades a one-time code (from
+// ARIS_JUDGE_ENROLL_CODE, or stdin) for this host's identity, then exits.
+const JUDGE_ENROLL = process.argv.includes("--enroll-judge");
 // BEHAVIOR: opt-in, any mode. A session that sweeps the host is reported, never killed.
 const BEHAVIOR_ON = process.argv.includes("--behavior");
 const SELFTEST = process.argv.includes("--selftest");
@@ -686,11 +691,23 @@ function main() {
   process.on("SIGINT", () => { falco.kill("SIGTERM"); process.exit(0); });
 }
 
+// --enroll-judge: the code comes from the environment or stdin, never from the command
+// line, where it would sit in the process list and in shell history.
+async function enrollJudgeCli() {
+  let code = process.env.ARIS_JUDGE_ENROLL_CODE || "";
+  if (!code && !process.stdin.isTTY) for await (const chunk of process.stdin) code += chunk;
+  const stateFile = judgeStateFile();
+  const r = await enrollJudge({ url: process.env.ARIS_JUDGE_URL, code, stateFile });
+  log(r.error ? `judge enrollment failed: ${r.error}` : `enrolled with the hosted judge as ${r.hostId}; this host's key is kept in ${stateFile} (0600) and never leaves it`);
+  process.exit(r.error ? 1 : 0);
+}
+
 // Only run when executed directly (node sentinel-agent.mjs / agentd.mjs), not when
 // imported by the unit tests.
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
   if (SELFTEST) selftest();
+  else if (JUDGE_ENROLL) enrollJudgeCli();
   else if (TRIPWIRE_REMOVE) {
     const r = disarmTripwire({ stateFile: TRIPWIRE_STATE });
     log(r.armed ? `tripwire removed: ${r.removed.length} path(s) deleted${r.kept.length ? `, left in place: ${r.kept.join(", ")}` : ""}` : `no tripwire state at ${TRIPWIRE_STATE}; nothing to remove`);

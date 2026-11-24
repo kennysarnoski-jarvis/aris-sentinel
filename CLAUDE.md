@@ -17,7 +17,7 @@ change and the result recorded in corpus/README.md (see its rules).
 - `bun run score <file>`: score a file the way the agent would (verdict, signals, evidence)
 - `bun run test:all`: everything below in one go
 - `bun run test`: tier-1 corpus (expect precision 1.00, tier-1 recall 0.61, pipeline-reachable recall 1.00, FP=0)
-- `bun test`: unit tests (expect 521 pass)
+- `bun test`: unit tests (expect 534 pass)
 - `bun run typecheck`: tsc over detector/ and test/ (expect clean)
 - `bun run windows`: PowerShell corpus (expect 10/10)
 - `bun run pipeline:stub`: two-tier routing (expect 6/6)
@@ -127,6 +127,19 @@ behavior now also counts per origin; session evidence and session kill still do 
 across them. The host reports an origin once per window, so trials that share an account
 inside five minutes are not independent: give the harness one account per concurrent
 trial and a `--round-pause-ms` longer than the window.
+
+## Hosted judge leg (`aris`, optional)
+A host enrolled with `--enroll-judge` can use the judge service Aris runs
+(`ARIS_JUDGE_URL`); it is one more leg in the chain (`providers`, wire `aris`). The host
+makes an Ed25519 key pair, keeps the private half in `ARIS_JUDGE_STATE` (0600) and signs a
+two-minute token per request (`judgeToken`). Invariants: the answer is a verdict and a
+band and nothing else is read from it; `undetermined` is a failed attempt, never a pass
+(the chain moves on, then fails closed); the host's key is never a field on a provider
+object, a log line or a request body; https only (`judgeBase`); the enrollment code comes
+from the environment or stdin, never argv; a tripwire-token payload still never reaches
+this leg. The service itself, its prompt and its operating details live in a separate
+private repository: nothing from there is copied here, and nothing about how it is
+operated goes in this repo beyond what DATA-HANDLING.md tells a customer.
 
 ## Long payloads (WINDOW_LINES)
 `inspect()` scores a payload longer than `WINDOW_LINES` (120) lines in overlapping windows

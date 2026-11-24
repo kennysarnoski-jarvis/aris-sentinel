@@ -93,7 +93,7 @@ exec / script-block  ─►  decode (base64 · hex · nested)  ─►  tier 1: n
                               allow ◄── <0.30 ──────────────────┤
                                                       escalate (0.30–0.60)
                                                                  │
-                               tier 2: LLM judge chain (local → Claude → openai → kimi)
+                               tier 2: LLM judge chain (local → aris → Claude → openai → kimi)
                                                                  │
                      block ◄── agentic / fail-closed ────────────┼──── not-agentic ──► allow
                      alert ◄── no judge · budget spent ──────────┘
@@ -106,6 +106,7 @@ exec / script-block  ─►  decode (base64 · hex · nested)  ─►  tier 1: n
 | judge | config | why you'd pick it |
 |---|---|---|
 | **local** | `OPENAI_BASE_URL=http://127.0.0.1:11434/v1` + `OPENAI_MODEL` (Ollama, vLLM, llama.cpp) | nothing leaves the box; first in the chain by default. `qwen2.5:14b` went 74/74 on the corpus |
+| **aris** | `ARIS_JUDGE_URL` + a one-time enrollment (`--enroll-judge`) | the hosted judge run by Aris, by enrollment only: no model key on the box, and the answer is a verdict and a confidence band, never model text. See [DATA-HANDLING](agent/DATA-HANDLING.md) |
 | **anthropic** | `ANTHROPIC_API_KEY` (Claude Opus 5.5) | 74/74 on the corpus; server-side fallbacks rescued 10/48 classifier declines in the matrix |
 | **openai** | `OPENAI_API_KEY` + `OPENAI_MODEL`, or any remote OpenAI-compatible `OPENAI_BASE_URL` | bring your own |
 | **kimi** | `KIMI_API_KEY` (Kimi K3) | no cyber input screen |
@@ -295,7 +296,8 @@ A hosted model's safety classifier screens request *content*, not purpose. Ask i
 | `ANTHROPIC_API_KEY` | — | Claude judge. `ARIS_MODEL` overrides `claude-opus-5-5`; `ARIS_TIER2_EFFORT` sets `low`…`max`; `ARIS_TIER2_FALLBACKS=0` turns server-side fallbacks off |
 | `OPENAI_BASE_URL` + `OPENAI_MODEL` | — | OpenAI-wire judge. A loopback URL is the **local** leg; anything else is **openai**. `OPENAI_API_KEY` adds a bearer token |
 | `KIMI_API_KEY` | — | Kimi K3 judge (`api.kimi.com/coding`, Anthropic wire) |
-| `ARIS_TIER2_ORDER` | `local,anthropic,openai,kimi` | chain order; unconfigured legs skipped |
+| `ARIS_JUDGE_URL` | — | the hosted judge (https only), used once the host is enrolled with `--enroll-judge`. `ARIS_JUDGE_STATE` is where the host's identity is kept (0600) |
+| `ARIS_TIER2_ORDER` | `local,aris,anthropic,openai,kimi` | chain order; unconfigured legs skipped |
 | `ARIS_FAIL_MODE` | `closed` | `alert` turns refusal/error/timeout into an alert instead of a block |
 | `ARIS_TIER2_TIMEOUT_MS` / `ARIS_TIER2_DEADLINE_MS` | `20000` / `45000` | per attempt / whole chain |
 | `ARIS_TIER2_CACHE_TTL_MS` / `ARIS_TIER2_CONCURRENCY` / `ARIS_TIER2_BUDGET_PER_MIN` | `600000` / `4` / `30` | the governor. Budget `0` = unlimited |
@@ -322,7 +324,7 @@ A hosted model's safety classifier screens request *content*, not purpose. Ask i
 | command | what it proves | key |
 |---|---|---|
 | `bun run test` | tier-1 on the Linux corpus: precision 1.00, tier-1 recall 0.61, pipeline-reachable recall 1.00, 0 false positives; the decode stage defeats base64 and exec-wrapping | no |
-| `bun test` | 521 unit tests: session evidence (window, reuse, no tier-1 conviction), session kill and quarantine (stubbed kill primitives), the tripwire (token and decoy matching, encoded layers, redaction, planting and removal in a temp directory, a host's own wording and names, the token never reaching a judge or a log), session behavior (the command reader on Linux and Windows command lines, the window, the alert that never kills even fully armed), long payloads scored in windows, verdict validation, timeouts, provider order on both wires, fallback gating, refusal stops, governor, policy, cwd resolution, inline-flag detection, alert and error incidents, the CLI, corpus snapshot, single-source guard | no |
+| `bun test` | 534 unit tests: session evidence (window, reuse, no tier-1 conviction), session kill and quarantine (stubbed kill primitives), the tripwire (token and decoy matching, encoded layers, redaction, planting and removal in a temp directory, a host's own wording and names, the token never reaching a judge or a log), session behavior (the command reader on Linux and Windows command lines, the window, the alert that never kills even fully armed), long payloads scored in windows, verdict validation, timeouts, provider order on both wires, fallback gating, refusal stops, governor, policy, cwd resolution, inline-flag detection, alert and error incidents, the CLI, corpus snapshot, single-source guard | no |
 | `bun run windows` | 10/10 narrated PowerShell caught, benign and encoded cradles clear | no |
 | `bun run pipeline:stub` | only the escalate band reaches tier 2 | no |
 | `bun run sessions:stub` | 11/11: thin agentic sessions reach the judge as a transcript, quiet benign sessions never do | no |

@@ -16,7 +16,7 @@
 // the tripwire only, to plant and remove its decoys.)
 
 import { Buffer } from "node:buffer";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createPrivateKey, generateKeyPairSync, randomBytes, sign } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, rmdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, posix, win32 } from "node:path";
 
@@ -339,7 +339,7 @@ export const ANTHROPIC_URL = "https://api.anthropic.com";
 export const KIMI_URL = "https://api.kimi.com/coding"; // Anthropic wire, coding-plan keys. NOT api.moonshot.ai.
 export const KIMI_MODEL = "k3";
 export const OPENAI_URL = "https://api.openai.com/v1";
-export const DEFAULT_ORDER = ["local", "anthropic", "openai", "kimi"];
+export const DEFAULT_ORDER = ["local", "aris", "anthropic", "openai", "kimi"];
 export const FALLBACK_BETA = "server-side-fallback-2026-07-01";
 const EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
 // Models that accept the server-side `fallbacks` parameter (Opus/Sonnet/Fable 5.x).
@@ -394,6 +394,110 @@ export function parseVerdict(text) {
   }
 }
 
+// ── the hosted judge (optional leg) ──────────────────────────────────────────
+// Aris runs a judge service for hosts that would rather not hold a model key. It gets
+// the same text any other leg would get and answers with a verdict and a confidence
+// band, nothing else: no reasoning and no model output come back, so the `reasoning`
+// of a hosted verdict is a fixed line written here.
+//
+// A host proves who it is with an Ed25519 key pair it makes itself. The private key is
+// written once to a root-only state file and never leaves the box; the service keeps
+// the public half. Each request carries a token the host signs, good for two minutes.
+// There is no shared secret to steal from either side.
+export const JUDGE_AUDIENCE = "aris-sentinel-judge";
+export const JUDGE_TOKEN_TTL_S = 120;
+export const JUDGE_MAX_CHARS = 64_000;
+// The service reports a band, not a number; these stand in where a number is shown.
+export const JUDGE_BANDS = Object.freeze({ low: 0.5, medium: 0.75, high: 0.95 });
+const HOST_ID_RE = /^host_[0-9a-f]{16}$/;
+const b64u = (v) => Buffer.from(typeof v === "string" ? v : JSON.stringify(v)).toString("base64url");
+
+/** The judge's base URL without a trailing slash, or null. https only (plain http to loopback, for tests), no credentials, query or fragment. */
+export function judgeBase(url) {
+  try {
+    const u = new URL(String(url));
+    if (u.protocol !== "https:" && !(u.protocol === "http:" && isLoopback(u.href))) return null;
+    if (u.username || u.password || u.search || u.hash) return null;
+    return u.href.replace(/\/+$/, "");
+  } catch {
+    return null;
+  }
+}
+
+/** Where this host keeps its judge identity: ARIS_JUDGE_STATE, or the agent's state directory. */
+export function judgeStateFile(env = process.env, platform = process.platform) {
+  if (env.ARIS_JUDGE_STATE) return env.ARIS_JUDGE_STATE;
+  return platform === "win32" ? win32.join(env.ProgramData || "C:\\ProgramData", "aris-sentinel", "judge.json") : "/var/lib/aris-sentinel/judge.json";
+}
+
+/** This host's judge identity from its state file, or null (missing, malformed, or readable by anyone but its owner). */
+export function readJudgeIdentity(stateFile) {
+  try {
+    if (process.platform !== "win32" && statSync(stateFile).mode & 0o077) return null;
+    const s = JSON.parse(readFileSync(stateFile, "utf8"));
+    if (!s || s.v !== 1 || typeof s.hostId !== "string" || !HOST_ID_RE.test(s.hostId) || typeof s.privateKey !== "string") return null;
+    createPrivateKey(s.privateKey); // throws on anything that is not a private key
+    return { hostId: s.hostId, privateKey: s.privateKey };
+  } catch {
+    return null;
+  }
+}
+
+/** A token for one request: signed by the host's key, naming the host, expiring in JUDGE_TOKEN_TTL_S. */
+export function judgeToken(identity, now = Date.now()) {
+  const iat = Math.floor(now / 1000);
+  const head = b64u({ alg: "EdDSA", typ: "JWT" });
+  const body = b64u({ iss: identity.hostId, sub: identity.hostId, aud: JUDGE_AUDIENCE, iat, exp: iat + JUDGE_TOKEN_TTL_S, jti: randomBytes(16).toString("hex") });
+  return `${head}.${body}.${sign(null, Buffer.from(`${head}.${body}`), createPrivateKey(identity.privateKey)).toString("base64url")}`;
+}
+
+/**
+ * Enroll this host with the hosted judge: make a key pair, keep the private half in
+ * `stateFile` (0600), and trade a one-time code plus the PUBLIC half for a host ID.
+ * The key is saved before the code is spent, and removed again if enrollment fails, so
+ * a failure costs neither a usable code nor a stray key. Never throws: `{hostId, error}`.
+ */
+export async function enrollJudge({ url, code, stateFile, fetch: f = globalThis.fetch, timeoutMs = 20_000 } = {}) {
+  try {
+    const base = judgeBase(url);
+    if (!base) throw new Error("the judge URL must be an https URL");
+    if (!stateFile) throw new Error("no state file");
+    if (typeof code !== "string" || !code.trim()) throw new Error("no enrollment code");
+    if (existsSync(stateFile)) throw new Error(`${stateFile} already exists: this host is enrolled (remove the file to enroll again)`);
+    const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+    const state = { v: 1, hostId: null, privateKey: privateKey.export({ type: "pkcs8", format: "pem" }), url: base, enrolled: null };
+    const save = () => {
+      mkdirSync(dirname(stateFile), { recursive: true });
+      writeFileSync(stateFile, JSON.stringify(state, null, 2) + "\n", { mode: 0o600 });
+      chmodSync(stateFile, 0o600);
+    };
+    save();
+    try {
+      const { kty, crv, x } = publicKey.export({ format: "jwk" });
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), timeoutMs);
+      let res;
+      try {
+        res = await f(base + "/v1/enroll", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code: code.trim(), public_key: { kty, crv, x } }), signal: ctl.signal });
+      } finally {
+        clearTimeout(timer);
+      }
+      if (!res.ok) throw new Error(res.status === 403 ? "the code was refused (wrong, already used, or expired)" : `the judge answered HTTP ${res.status}`);
+      const hostId = (await res.json())?.host_id;
+      if (typeof hostId !== "string" || !HOST_ID_RE.test(hostId)) throw new Error("the judge did not return a host id");
+      state.hostId = hostId;
+      state.enrolled = new Date().toISOString();
+      save();
+      return { hostId, error: null };
+    } catch (e) {
+      rmSync(stateFile, { force: true });
+      throw e;
+    }
+  } catch (e) {
+    return { hostId: null, error: e && e.name === "AbortError" ? "the judge did not answer in time" : String(e && e.message ? e.message : e) };
+  }
+}
+
 /** The configured tier-2 providers, in chain order. Empty when nothing is configured. */
 export function providers(env = process.env) {
   const all = {};
@@ -422,6 +526,12 @@ export function providers(env = process.env) {
       attempts: [{ system: SYSTEM_AUTHORSHIP }, { system: SYSTEM }],
     };
   }
+  if (env.ARIS_JUDGE_URL) {
+    const base = judgeBase(env.ARIS_JUDGE_URL);
+    const identity = base ? readJudgeIdentity(judgeStateFile(env)) : null;
+    // `auth` is a function so the host's key is never a plain field on a provider (which gets listed and logged).
+    if (identity) all.aris = { name: "aris", wire: "aris", url: base + "/v1/judge", headers: {}, model: "aris-judge", auth: () => "Bearer " + judgeToken(identity), attempts: [{}] };
+  }
   if (env.KIMI_API_KEY) {
     all.kimi = {
       name: "kimi",
@@ -440,6 +550,10 @@ export function providers(env = process.env) {
 export function providerWarnings(env = process.env) {
   const out = [];
   if ((env.OPENAI_API_KEY || env.OPENAI_BASE_URL) && !env.OPENAI_MODEL) out.push("OPENAI_BASE_URL / OPENAI_API_KEY set but OPENAI_MODEL is empty: the openai-wire judge is disabled");
+  if (env.ARIS_JUDGE_URL) {
+    if (!judgeBase(env.ARIS_JUDGE_URL)) out.push("ARIS_JUDGE_URL must be an https URL with no credentials or query: the hosted judge is disabled");
+    else if (!readJudgeIdentity(judgeStateFile(env))) out.push("ARIS_JUDGE_URL is set but this host is not enrolled (run the agent with --enroll-judge): the hosted judge is disabled");
+  }
   if (env.ARIS_TIER2_EFFORT && !EFFORTS.has(env.ARIS_TIER2_EFFORT)) out.push(`ARIS_TIER2_EFFORT=${env.ARIS_TIER2_EFFORT} is not one of low|medium|high|xhigh|max: ignored`);
   if (env.ARIS_TIER2_ORDER) {
     const known = new Set(DEFAULT_ORDER);
@@ -470,13 +584,33 @@ const textOfOpenAI = (msg) => {
  *              as `{stop: "refusal:<category>"}`.
  *   openai     POST /chat/completions (OpenAI, Ollama, vLLM, llama.cpp…). Asks for a JSON
  *              object; `message.refusal` becomes `{stop: "refusal:model"}`.
+ *   aris       POST /v1/judge on the hosted judge. Sends the text and a host-signed
+ *              token (`auth`); no prompt and no model are ours to choose there. The
+ *              answer is a verdict and a band; "undetermined" becomes `{stop: "undetermined"}`.
  * Returns the validated verdict (with the serving `model`), or `{stop}` saying why there
  * was none (http status, stop reason, timeout, invalid-verdict, error:...). NEVER throws.
  */
-export async function attempt(payload, { url, headers = {}, model, wire = "anthropic", thinking = true, system = SYSTEM, effort, fallbacks = false, timeoutMs = 20_000, fetch: f = globalThis.fetch } = {}) {
+export async function attempt(payload, { url, headers = {}, model, wire = "anthropic", thinking = true, system = SYSTEM, effort, fallbacks = false, auth, timeoutMs = 20_000, fetch: f = globalThis.fetch } = {}) {
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), timeoutMs);
   try {
+    if (wire === "aris") {
+      const res = await f(url, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...headers, authorization: typeof auth === "function" ? auth() : "" },
+        body: JSON.stringify({ text: String(payload).slice(0, JUDGE_MAX_CHARS) }),
+        signal: ctl.signal,
+      });
+      if (!res.ok) return { stop: "http:" + res.status };
+      const data = await res.json();
+      // "undetermined" is the service saying nobody judged this. It is a failed attempt,
+      // never a not-agentic verdict: the chain moves on, then fails closed.
+      if (data?.verdict === "undetermined") return { stop: "undetermined" };
+      const known = (data?.verdict === "agentic" || data?.verdict === "not_agentic") && typeof data?.band === "string" && Object.hasOwn(JUDGE_BANDS, data.band);
+      if (!known) return { stop: "invalid-verdict" };
+      const agentic = data.verdict === "agentic";
+      return { ok: { agentic, confidence: JUDGE_BANDS[data.band], reasoning: `hosted judge: ${agentic ? "agentic" : "not agentic"}, ${data.band} confidence`, model: "aris-judge" } };
+    }
     let req;
     if (wire === "openai") {
       req = {
@@ -580,6 +714,7 @@ export async function adjudicate(payload, opts = {}) {
         system: opts.system ?? a.system ?? SYSTEM,
         effort: p.effort,
         fallbacks: p.name === "anthropic" && opts.model ? fallbackCapable(opts.model) && p.fallbacks !== false : !!p.fallbacks,
+        auth: p.auth,
         timeoutMs: Math.min(timeoutMs, remaining),
         fetch: opts.fetch,
       });

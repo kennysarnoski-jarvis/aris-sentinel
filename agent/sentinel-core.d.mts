@@ -40,7 +40,7 @@ export interface Adjudication {
 }
 export type AttemptResult = { ok: Adjudication } | { stop: string };
 
-export type Wire = "anthropic" | "openai";
+export type Wire = "anthropic" | "openai" | "aris";
 export interface Attempt {
   system?: string;
   thinking?: boolean;
@@ -55,6 +55,8 @@ export interface Provider {
   effort?: "low" | "medium" | "high" | "xhigh" | "max";
   /** Anthropic leg only: ask for server-side fallbacks on a classifier refusal */
   fallbacks?: boolean;
+  /** Hosted judge leg only: makes the Authorization value for one request */
+  auth?: () => string;
   attempts: Attempt[];
 }
 export interface AttemptOptions {
@@ -66,6 +68,7 @@ export interface AttemptOptions {
   system?: string;
   effort?: Provider["effort"];
   fallbacks?: boolean;
+  auth?: () => string;
   timeoutMs?: number;
   fetch?: typeof fetch;
 }
@@ -280,6 +283,20 @@ export const KIMI_MODEL: string;
 export const OPENAI_URL: string;
 export const DEFAULT_ORDER: string[];
 export const FALLBACK_BETA: string;
+export const JUDGE_AUDIENCE: string;
+export const JUDGE_TOKEN_TTL_S: number;
+export const JUDGE_MAX_CHARS: number;
+export const JUDGE_BANDS: Readonly<{ low: number; medium: number; high: number }>;
+export interface JudgeIdentity {
+  hostId: string;
+  /** PKCS#8 PEM. Never leaves the host. */
+  privateKey: string;
+}
+export function judgeBase(url: unknown): string | null;
+export function judgeStateFile(env?: Record<string, string | undefined>, platform?: string): string;
+export function readJudgeIdentity(stateFile: string): JudgeIdentity | null;
+export function judgeToken(identity: JudgeIdentity, now?: number): string;
+export function enrollJudge(opts: { url?: string; code?: string; stateFile?: string; fetch?: typeof fetch; timeoutMs?: number }): Promise<{ hostId: string | null; error: string | null }>;
 export function fallbackCapable(model: string | undefined): boolean;
 export function providerWarnings(env?: Record<string, string | undefined>): string[];
 export function normalizeVerdict(v: unknown): Adjudication | null;

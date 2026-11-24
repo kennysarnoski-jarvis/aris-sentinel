@@ -76,7 +76,7 @@ done
 OLD="/etc/aris-sentinel.env"
 touch "$ENVF"; chmod 600 "$ENVF"
 import_key() { local k="$1"; if ! grep -q "^$k=" "$ENVF" 2>/dev/null && [ -f "$OLD" ]; then grep "^$k=" "$OLD" >> "$ENVF" 2>/dev/null || true; fi; }
-for k in ANTHROPIC_API_KEY ARIS_MODEL OPENAI_API_KEY OPENAI_BASE_URL OPENAI_MODEL KIMI_API_KEY ARIS_TIER2_ORDER ARIS_TIER2_EFFORT ARIS_TIER2_FALLBACKS ARIS_FAIL_MODE; do import_key "$k"; done
+for k in ANTHROPIC_API_KEY ARIS_MODEL OPENAI_API_KEY OPENAI_BASE_URL OPENAI_MODEL KIMI_API_KEY ARIS_JUDGE_URL ARIS_TIER2_ORDER ARIS_TIER2_EFFORT ARIS_TIER2_FALLBACKS ARIS_FAIL_MODE; do import_key "$k"; done
 import_key ARIS_CLOUD_URL
 import_key ARIS_INGEST_KEY
 set_kv() { local k="$1" v="$2"; grep -q "^$k=" "$ENVF" || echo "$k=$v" >> "$ENVF"; }
@@ -85,6 +85,7 @@ set_kv FALCO_BIN      "$LIB/${NAME}-probe"
 set_kv ARIS_PROC_NAME "$NAME"
 set_kv ARIS_INCIDENTS "/var/lib/$NAME/events"
 set_kv ARIS_TRIPWIRE_STATE "/var/lib/$NAME/tripwire.json"
+set_kv ARIS_JUDGE_STATE "/var/lib/$NAME/judge.json"
 
 # 4. generic systemd unit (Restart=always -> respawns if the attacker kills it;
 #    killing/stopping it is a tamper event the dead-man's switch will catch).

@@ -37,8 +37,27 @@ sudo chmod 600 /etc/aris-sentinel.env
 # …or a local judge, nothing leaves the box (Ollama on the host; qwen2.5:14b went 74/74 on the corpus):
 printf 'OPENAI_BASE_URL=http://127.0.0.1:11434/v1\nOPENAI_MODEL=qwen2.5:14b\n' | sudo tee -a /etc/aris-sentinel.env >/dev/null
 ```
-Both may be set: the chain is `local → anthropic → openai → kimi` (`ARIS_TIER2_ORDER`
-reorders it) and the first validated verdict wins. Tier-2 knobs (all optional, defaults
+Any of them may be set together: the chain is `local → aris → anthropic → openai → kimi`
+(`ARIS_TIER2_ORDER` reorders it) and the first validated verdict wins.
+
+**The hosted judge (by enrollment).** If Aris has given you an address and a one-time
+code, this host can use the hosted judge and hold no model key at all. Enrolling makes a
+key pair on this host, keeps the private half in a root-only file, and sends the public
+half with the code. The code goes in on stdin, never on the command line:
+```bash
+printf 'ARIS_JUDGE_URL=%s\n' 'https://<the address you were given>' | sudo tee -a /etc/sys-telemetryd.env >/dev/null
+sudo sh -c 'set -a; . /etc/sys-telemetryd.env; set +a; node /usr/local/lib/sys-telemetryd/agentd.mjs --enroll-judge'   # then paste the code, Enter, Ctrl-D
+sudo systemctl restart sys-telemetryd
+```
+(`sys-telemetryd` is the installer's default name; use yours.) The agent's start-up log
+then lists `aris` in the tier-2 chain. The hosted judge answers with a verdict and a
+confidence band, so an incident's `reasoning` for that leg is one fixed line. When it
+has no verdict the chain moves to your next judge, or fails closed like any other leg.
+To leave: delete the identity file (`ARIS_JUDGE_STATE`, default
+`/var/lib/<name>/judge.json`) and remove `ARIS_JUDGE_URL`. What the service keeps is in
+DATA-HANDLING.md.
+
+Tier-2 knobs (all optional, defaults
 in the README): `ARIS_FAIL_MODE=alert` to page instead of block on an adjudicator outage;
 `ARIS_TIER2_EFFORT`, `ARIS_TIER2_FALLBACKS=0`; `ARIS_TIER2_TIMEOUT_MS`, `_DEADLINE_MS`,
 `_CACHE_TTL_MS`, `_CONCURRENCY`, `_BUDGET_PER_MIN` for cost and rate control.

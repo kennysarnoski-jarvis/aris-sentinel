@@ -240,6 +240,21 @@ the host each one asks about, and keeps them per session (`proc.sid`) for five m
   Text longer than 4096 characters is a script, not a command, and is skipped. The reader
   is a heuristic, not a shell parser. The tracker keeps area names and timestamps, never
   the command text.
+- **A service's commands are held to a lower count.** A command whose parents include a
+  web or application server or a database (nginx, apache, php-fpm, gunicorn, postgres, …),
+  or a general runtime that nobody logged in to start (java, node, python, ruby, php,
+  dotnet, …), is also counted in a window of its own and reported at three areas, one of
+  them sensitive. That is where an intruder who came in through an application runs its
+  first commands. `ARIS_BEHAVIOR_SERVICES` sets the names for a host: `billing-api` adds a
+  server of your own, `-java` removes a published name, `off` turns the rule off. Expect a
+  report from a service whose job is running other people's commands (a CI server, a
+  hosting panel): remove its name there. The agent reads the parents' names and the audit
+  login id from the capture rule (`aris_rules.yaml`); **an install made before 2026-11-24
+  must re-run `install.sh`** to pick the new rule up, and until then sees a service that
+  systemd starts and not one inside a container. Linux only. Validated live in the demo
+  VM on 2026-11-24. On real services it has been measured only for a few minutes
+  (`docs/demo-kill/soak-services.sh`: packaged web servers, databases and two applications
+  that inspect the host, 0 reports), so run it in monitor mode and read what it reports.
 - **What it misses.** A sweep slower than the window; an agent that goes straight for one
   thing; a sweep that touches fewer than two sensitive areas; files read by a program
   without running a command; a sweep spread across sessions (each `ssh host 'cmd'` is its
@@ -247,8 +262,8 @@ the host each one asks about, and keeps them per session (`proc.sid`) for five m
   expected miss.
 - **Cost.** With `--behavior` every exec is read, including two-letter commands the
   narration scorer skips. It is string work on one command line, no judge and no I/O.
-- **Validated live** in the demo VM: `docs/demo-kill/validate-behavior.sh`, 29/29 on three
-  consecutive runs of the final code on kernel 6.8 / Falco 0.45 (2026-11-10), fully armed
+- **Validated live** in the demo VM: `docs/demo-kill/validate-behavior.sh`, 41/41 on three
+  consecutive runs of the final code on kernel 6.8 / Falco 0.45 (2026-11-24), fully armed
   (`--enforce --kill-session --behavior`) so that "never a kill" was checked where a kill
   was possible. Not yet run on a pilot host. The thresholds were chosen before the samples
   were scored and nothing was tuned afterwards. Run it in monitor mode and read what it

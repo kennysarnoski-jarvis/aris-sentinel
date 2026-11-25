@@ -17,12 +17,12 @@ change and the result recorded in corpus/README.md (see its rules).
 - `bun run score <file>`: score a file the way the agent would (verdict, signals, evidence)
 - `bun run test:all`: everything below in one go
 - `bun run test`: tier-1 corpus (expect precision 1.00, tier-1 recall 0.61, pipeline-reachable recall 1.00, FP=0)
-- `bun test`: unit tests (expect 534 pass)
+- `bun test`: unit tests (expect 573 pass)
 - `bun run typecheck`: tsc over detector/ and test/ (expect clean)
 - `bun run windows`: PowerShell corpus (expect 10/10)
 - `bun run pipeline:stub`: two-tier routing (expect 6/6)
 - `bun run sessions:stub`: session evidence routing over corpus/sessions (expect 11/11)
-- `bun run behavior`: session behavior over corpus/behavior (expect 38/38)
+- `bun run behavior`: session behavior over corpus/behavior (expect 46/46)
 - `bun run score --session <files|x.jsonl>`: score inputs as ONE session (also shows the areas each command asks about and where the session becomes a sweep)
 - `bun run selftest` and `bun run win:mock`: agent smoke tests
 
@@ -109,8 +109,32 @@ grouped, so do not add web servers, containers or schedulers without measuring t
 still per `proc.sid` on purpose: they can end in a kill.
 A sweep's `steps` groups execs under `BEHAVIOR.stepMs` apart: one command line fans out
 into several execs a millisecond apart, so only the pauses between steps mean anything.
+Commands that DESCEND FROM A SERVICE are held to a lower count (`BEHAVIOR_SERVICE`: three
+areas, one sensitive, same window; `behaviorService`). It exists because the open-source
+attack frameworks read on 2026-11-24 keep their model off the host and send bare commands
+through a web application, and the host checks one of them lists were three areas with one
+sensitive (corpus/README.md, 2026-11-24). Two name lists in the core: `servers` (nginx,
+php-fpm, a database…) count whoever started them; `runtimes` (java, node, python…) count
+ONLY with `noLogin === true`, because the same binary is a developer's tool under a login.
+`ARIS_BEHAVIOR_SERVICES` adds or removes names per host, or turns the rule off. Invariants:
+still an alert and never a kill; a service's commands are counted in a window of their own
+(`service:<session>`), so what a server's owner types in the same session is never reported
+as the server's doing; one look is one report (the sweep if the session has one, else the
+service's); "not known" is never "nobody logged in"; the Linux agent reads lineage PER EXEC
+from the event (`proc.pname`, `proc.aname[2..4]`, `user.loginuid`; `lineageOf`,
+`behaviorFacts`) and never keeps it per session. `benign_service_ci_build_java.jsonl` is an
+EXPECTED alert (a service whose job is running other people's commands); the four
+`benign_service_*`/`benign_login_*` twins beside it must stay quiet. A service's commands
+are NOT counted for the SSH origin above them and are not covered by its report (found
+live: a login's earlier sweep was hiding a server's commands). Measured only small: the
+written samples, and `docs/demo-kill/soak-services.sh` (packaged servers for a few minutes,
+0 reports on 2026-11-24). Not a day of real traffic.
 Live check (needs the Lima VM; ask Kenny first): `docs/demo-kill/validate-behavior.sh`,
-expect 29/29. `docs/demo-kill/soak-behavior.sh` (same VM) runs real admin activity under
+expect 41/41 (2026-11-24, three runs). Its drivers are started DETACHED from the SSH login
+that runs the script, on purpose: as children of that login every scenario is one origin
+and the first report covers the rest, which made this script fail 6 of 29 from 2026-11-21
+until it was next run. Re-run a live check after any change to what it checks.
+`docs/demo-kill/soak-behavior.sh` (same VM) runs real admin activity under
 the agent and prints what was reported; it is a measurement, not a pass/fail.
 `bun run tripwire:bait -- --tasks survey` (key-needed) measures the rule on a real model.
 

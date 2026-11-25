@@ -1,0 +1,3 @@
+{"t": 0, "exec": true, "origin": {"entry": "containerd-shim", "entryPid": 2310, "login": null, "noLogin": true, "user": "node", "lineage": ["sh", "node", "containerd-shim"]}, "payload": "sh -c id"}
+{"t": 24, "exec": true, "origin": {"entry": "containerd-shim", "entryPid": 2310, "login": null, "noLogin": true, "user": "node", "lineage": ["sh", "node", "containerd-shim"]}, "payload": "sh -c env"}
+{"t": 51, "exec": true, "origin": {"entry": "containerd-shim", "entryPid": 2310, "login": null, "noLogin": true, "user": "node", "lineage": ["sh", "node", "containerd-shim"]}, "payload": "sh -c curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/"}

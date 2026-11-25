@@ -1,0 +1,8 @@
+{"t": 0, "exec": true, "origin": {"entry": "php-fpm8.3", "entryPid": 911, "login": null, "noLogin": true, "user": "www-data", "lineage": ["sh", "php-fpm8.3", "php-fpm8.3"]}, "payload": "sh -c id;uname -a;whoami"}
+{"t": 0.004, "exec": true, "origin": {"entry": "php-fpm8.3", "entryPid": 911, "login": null, "noLogin": true, "user": "www-data", "lineage": ["sh", "php-fpm8.3", "php-fpm8.3"]}, "payload": "id"}
+{"t": 0.008, "exec": true, "origin": {"entry": "php-fpm8.3", "entryPid": 911, "login": null, "noLogin": true, "user": "www-data", "lineage": ["sh", "php-fpm8.3", "php-fpm8.3"]}, "payload": "uname -a"}
+{"t": 0.012, "exec": true, "origin": {"entry": "php-fpm8.3", "entryPid": 911, "login": null, "noLogin": true, "user": "www-data", "lineage": ["sh", "php-fpm8.3", "php-fpm8.3"]}, "payload": "whoami"}
+{"t": 31, "exec": true, "origin": {"entry": "php-fpm8.3", "entryPid": 911, "login": null, "noLogin": true, "user": "www-data", "lineage": ["sh", "php-fpm8.3", "php-fpm8.3"]}, "payload": "sh -c sudo -l"}
+{"t": 31.004, "exec": true, "origin": {"entry": "php-fpm8.3", "entryPid": 911, "login": null, "noLogin": true, "user": "www-data", "lineage": ["sh", "php-fpm8.3", "php-fpm8.3"]}, "payload": "sudo -l"}
+{"t": 63, "exec": true, "origin": {"entry": "php-fpm8.3", "entryPid": 911, "login": null, "noLogin": true, "user": "www-data", "lineage": ["sh", "php-fpm8.3", "php-fpm8.3"]}, "payload": "sh -c getcap -r / 2>/dev/null"}
+{"t": 63.004, "exec": true, "origin": {"entry": "php-fpm8.3", "entryPid": 911, "login": null, "noLogin": true, "user": "www-data", "lineage": ["sh", "php-fpm8.3", "php-fpm8.3"]}, "payload": "getcap -r /"}

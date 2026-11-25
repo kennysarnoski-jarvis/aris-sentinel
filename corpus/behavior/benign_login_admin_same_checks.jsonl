@@ -1,0 +1,5 @@
+{"t": 0, "exec": true, "origin": {"entry": "sshd", "entryPid": 812, "login": "alice", "noLogin": false, "user": "alice", "client": "203.0.113.7", "lineage": ["bash", "sshd-session", "sshd"]}, "payload": "id"}
+{"t": 5, "exec": true, "origin": {"entry": "sshd", "entryPid": 812, "login": "alice", "noLogin": false, "user": "alice", "client": "203.0.113.7", "lineage": ["bash", "sshd-session", "sshd"]}, "payload": "uname -a"}
+{"t": 9, "exec": true, "origin": {"entry": "sshd", "entryPid": 812, "login": "alice", "noLogin": false, "user": "alice", "client": "203.0.113.7", "lineage": ["bash", "sshd-session", "sshd"]}, "payload": "whoami"}
+{"t": 20, "exec": true, "origin": {"entry": "sshd", "entryPid": 812, "login": "alice", "noLogin": false, "user": "alice", "client": "203.0.113.7", "lineage": ["bash", "sshd-session", "sshd"]}, "payload": "sudo -l"}
+{"t": 44, "exec": true, "origin": {"entry": "sshd", "entryPid": 812, "login": "alice", "noLogin": false, "user": "alice", "client": "203.0.113.7", "lineage": ["bash", "sshd-session", "sshd"]}, "payload": "getcap -r /"}

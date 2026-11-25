@@ -189,7 +189,7 @@ export interface DecideSessionOptions extends DecideOptions {
   /** where the session came from, as the agent found it; a command counts for its session and for its origin */
   origin?: BehaviorOriginFacts | null;
 }
-/** Facts about where a session came from. Only SSH logins (entry `sshd…`) are grouped today. */
+/** Facts about where a session came from and what its commands descend from. Only SSH logins (entry `sshd…`) are grouped as an origin. */
 export interface BehaviorOriginFacts {
   /** name of the process just below init that the session descends from */
   entry?: string | null;
@@ -199,6 +199,10 @@ export interface BehaviorOriginFacts {
   user?: string | null;
   /** the SSH client's address, when known */
   client?: string | null;
+  /** names of the processes above the command, nearest first (read for the service rule) */
+  lineage?: (string | null | undefined)[] | null;
+  /** true when nobody logged in to start it (a service, a container), false when somebody did, null or absent when not known */
+  noLogin?: boolean | null;
 }
 /** One of the areas of a host a command can ask about (see BEHAVIOR_CATEGORIES). */
 export type BehaviorCategory =
@@ -206,7 +210,8 @@ export type BehaviorCategory =
   | "scheduled" | "software" | "containers" | "accounts" | "privilege" | "secrets" | "cloud";
 /** A session that asked about enough areas of the host, in one window, to be reported. */
 export interface BehaviorHit {
-  kind: "sweep";
+  /** `service`: the commands descend from a service, and were reported at BEHAVIOR_SERVICE's lower count */
+  kind: "sweep" | "service";
   categories: BehaviorCategory[];
   sensitive: BehaviorCategory[];
   /** category-bearing execs in the window */
@@ -222,17 +227,31 @@ export interface BehaviorHit {
   origin?: string;
   /** for an origin: how many sessions the window holds */
   sessions?: number;
+  /** for kind `service`: the listed program name the commands descend from, and that in words */
+  service?: string;
+  serviceWhat?: string;
+}
+/** The program names a host treats as services (the published lists and ARIS_BEHAVIOR_SERVICES). */
+export interface BehaviorServices {
+  readonly enabled: boolean;
+  /** counted whoever started them */
+  readonly servers: ReadonlySet<string>;
+  /** counted only when nobody logged in to start them */
+  readonly runtimes: ReadonlySet<string>;
 }
 export interface BehaviorTracker {
   /** returns a sweep exactly once, on the command that completes it; `member` names the session when `key` stands for several */
-  observe(key: string | number | null | undefined, command: string | BehaviorCategory[], member?: string | number | null): BehaviorHit | null;
+  observe(key: string | number | null | undefined, command: string | BehaviorCategory[], member?: string | number | null, rule?: { categories: number; sensitive: number }): BehaviorHit | null;
   peek(key: string | number): { categories: BehaviorCategory[]; sensitive: BehaviorCategory[]; commands: number; reported: boolean };
   forget(key: string | number): boolean;
   size(): number;
   enabled: boolean;
   windowMs: number;
+  services: BehaviorServices;
 }
 export interface BehaviorTrackerOptions {
+  /** the service name lists; the default reads ARIS_BEHAVIOR_SERVICES */
+  services?: BehaviorServices;
   windowMs?: number;
   minCategories?: number;
   minSensitive?: number;
@@ -330,6 +349,11 @@ export function observeBehavior(tracker: BehaviorTracker | null | undefined, ses
 /** the origin a session's facts name, or null when it has none that is grouped (only SSH logins are) */
 export function behaviorOrigin(facts?: BehaviorOriginFacts | null): { key: string; what: string } | null;
 export function createBehaviorTracker(opts?: BehaviorTrackerOptions): BehaviorTracker;
+/** what a session whose commands descend from a service is held to: this many areas, this many of them sensitive, in BEHAVIOR.windowMs */
+export const BEHAVIOR_SERVICE: Readonly<{ categories: number; sensitive: number }>;
+export function behaviorServices(env?: Record<string, string | undefined>): BehaviorServices;
+/** the listed service the facts' lineage names (nearest first), or null; a runtime counts only with `noLogin: true` */
+export function behaviorService(facts?: BehaviorOriginFacts | null, services?: BehaviorServices): { name: string; tier: "server" | "runtime"; what: string } | null;
 
 export function isTripwireToken(t: unknown): boolean;
 export function newTripwireToken(): string;

@@ -315,6 +315,116 @@ They were written before any was scored, and the predictions are in the table, b
 are not a held-out sample of real intrusions. The report names an agent framework and says
 its commands came from an LLM; it does not say what they were.
 
+### 2026-11-24 — session behavior: commands that descend from a service (8 sessions added, then a change)
+
+On 2026-11-24 we read the source of three open-source LLM penetration-testing frameworks
+(PentAGI `cffed94`, Strix `935f823`, HexStrike AI `d689933`; nothing was run). All three
+keep the model on the operator's side, so what reaches a host is a bare command sent
+through whatever has been got into, most often a web application. None prescribes a host
+survey. Strix's remote-code-execution skill lists checks the model may choose from:
+`;id;uname -a;whoami`, then under "post-exploitation" `sudo -l`, SUID binaries and
+`getcap -r /`, scheduled jobs and services, SSH keys and cloud metadata credentials.
+
+Eight sessions were written from that. Three are an intruder's commands as the children of
+a program that serves an application; five are ordinary sessions beside them. Each line
+carries the facts the Linux agent would report: the names of the processes above the
+command (`lineage`, nearest first) and whether anybody logged in to start it (`noLogin`).
+
+They were scored with the detector as it stood at commit `e13c1c0`, which reads neither
+fact. The predictions, and the rule below with its two numbers, were written down before
+the first one was scored.
+
+| file | what it is | predicted, as-is | scored, as-is |
+|---|---|---|---|
+| `agentic_service_rce_probe_phpfpm.jsonl` | the three checks the skill spells out, as the children of php-fpm | missed | **missed** (3 areas: host, identity, privilege) |
+| `agentic_service_rce_checklist_java.jsonl` | the skill's list up to privilege escalation, under a Java application server | missed | **missed** (6 areas, 1 sensitive: privilege) |
+| `agentic_service_cloud_first_node.jsonl` | a Node application in a container: `id`, `env`, the metadata service | missed | **missed** (3 areas: cloud, environment, identity) |
+| `benign_service_app_shellouts_phpfpm.jsonl` | what a web application shells out for: image resizing, a git revision, free disk | quiet | quiet (3 areas, none sensitive) |
+| `benign_service_status_page_node.jsonl` | a status page served by a Node service | quiet | quiet (4 areas, none sensitive) |
+| `benign_login_admin_same_checks.jsonl` | the first file's three checks, typed by an admin in an SSH login | quiet | quiet (3 areas, 1 sensitive) |
+| `benign_login_runtime_tool_node.jsonl` | a developer's Node tool, started from their own login | quiet | quiet (3 areas, 1 sensitive) |
+| `benign_service_ci_build_java.jsonl` | a CI server's build under a Java service: `whoami`, `uname`, its SSH directory | quiet | quiet (3 areas, 1 sensitive) |
+
+Eight of eight as predicted. All three intruder sessions are missed: three areas with one
+sensitive is not a sweep, and neither is six with one. Counting areas cannot separate them
+from the two `benign_login_*` sessions and the CI build, which ask about exactly as much.
+None of the eight carries narration (tier-1 score 0.00 on every command).
+
+The change: a command that descends from a service is also counted in a window of its own
+and reported at **three areas, one of them sensitive**, in the same five minutes
+(`BEHAVIOR_SERVICE`, `behaviorService`). A service is a name on one of two lists. A program
+whose job is serving requests (nginx, php-fpm, a database) counts whoever started it. A
+general-purpose runtime (java, node, python) counts only when nobody logged in to start
+it, because the same binary is a developer's tool under a login. The sweep rule itself did
+not move. Scored again:
+
+| file | predicted, with the rule | scored |
+|---|---|---|
+| `agentic_service_rce_probe_phpfpm.jsonl` | reported at command 5 | **reported** at 5 (`sh -c sudo -l`) |
+| `agentic_service_rce_checklist_java.jsonl` | reported at command 4 | **reported** at 4 (`sh -c sudo -l`) |
+| `agentic_service_cloud_first_node.jsonl` | reported at command 3 | **reported** at 3 (the metadata request) |
+| `benign_service_app_shellouts_phpfpm.jsonl` | quiet | quiet |
+| `benign_service_status_page_node.jsonl` | quiet | quiet |
+| `benign_login_admin_same_checks.jsonl` | quiet (a login) | quiet |
+| `benign_login_runtime_tool_node.jsonl` | quiet (a runtime under a login) | quiet |
+| `benign_service_ci_build_java.jsonl` | **reported**, the cost of the rule | reported at 5 |
+
+Eight of eight. No existing snapshot row moved; eight were added (163 rows). 46 behavior
+sessions, 573 unit tests.
+
+What this does and does not show:
+
+- **The CI build is reported, on purpose.** A service whose job is running other people's
+  commands (a CI server, a hosting control panel) asks these questions for a living, and
+  nothing in a command line tells its build from an intruder's. It is kept as an expected
+  alert. Such a host removes the name (`ARIS_BEHAVIOR_SERVICES=-java`) or turns the rule off.
+- **On real services the rule has been measured once, and small.** These eight sessions
+  were written by the author of the rule, the intruder ones from a framework's checklist
+  and not from a recorded intrusion. The first table is a held-out result; the second is
+  the rule doing what it was written to do. `docs/demo-kill/soak-services.sh` is the only
+  thing nobody wrote: in the demo VM (Ubuntu 24.04, kernel 6.8, Falco 0.45.2, agent in
+  monitor mode, default window) it ran nginx with php-fpm, Apache with mod_php, PostgreSQL,
+  Redis, Tomcat with its examples and netdata, all from the distribution's packages, with
+  phpsysinfo 3.4.3 and gitweb behind the web servers, started and restarted them, asked for
+  pages three times, and started the five stock units that run as `python3 <script>`.
+
+  | session led by | process starts | areas its commands asked about | reported |
+  |---|---|---|---|
+  | php-fpm (phpsysinfo) | 118 | 4: host, logins, network, storage | no |
+  | apache2 (phpsysinfo, gitweb) | 144 | 4: host, logins, network, storage | no |
+  | java (Tomcat), before and after its restart | 5 and 5 | 1: host | no |
+  | netdata (not on either list), before and after its restart | 161 and 161 | 4: cloud, host, processes, software | no |
+  | everything else (PostgreSQL, Redis, the python3 units, the script's own shell; 31 sessions) | 200 | at most 1 | no |
+
+  794 process starts in 37 sessions, 0 reported. A first run had Tomcat's pages answered by
+  Apache (a port clash in the script) and was also 0; the table is the second. A real status page is one sensitive
+  question short of a report, and netdata, if a host named it a service, would be one. It
+  is start-up, one restart and three rounds of requests on one distribution: not a day of
+  traffic, and no CI server or control panel was in it.
+- **The same run recorded four narration alerts on a stock package's scripts.** netdata's
+  `charts.d.plugin` (751 lines) scored 0.53 on its own and, with `cgroup-name.sh` (659
+  lines) as session evidence, 0.63. With no judge configured that is an alert, never a
+  kill. Nothing was changed for it; what a judge makes of the two scripts is not measured.
+- **One thing was changed in the files after the first scoring.** The fact that says nobody
+  logged in was first written as `"login": null` alone; the rule needs it stated, so
+  `"noLogin"` was added to every line. The detector at `e13c1c0` reads neither, and the
+  files were scored again as-is afterwards with the same result.
+- **A name is all there is to go on.** An application served by a program on neither list
+  (a Go or Rust binary, a process that renames itself) is not a service to this rule, and a
+  host has to name it. On a kernel without audit login ids a runtime is never counted.
+- **On a real host the facts come from the capture rule** (`proc.aname[2..4]`,
+  `user.loginuid`), and that path was run live on 2026-11-24: Falco 0.45.2 emits the keys
+  under those names, `-1` for a process nobody logged in to start and `null` for an ancestor
+  that does not exist. Scenarios 9 to 11 of `docs/demo-kill/validate-behavior.sh` pass
+  (41/41 on three consecutive runs).
+- **The live run found a fault the unit tests had not.** Every session in the VM check came
+  from one SSH login. That login's origin had been reported for a sweep, and the report
+  covered a server's commands started under it: the first run was 30 of 38. A service's
+  commands are no longer counted for, or covered by, the login above them, and a unit test
+  holds that. The same run showed the script itself had been failing 6 of its 29 checks
+  since sessions from one origin were first counted together (2026-11-21): nobody had run
+  it since.
+
 ### 2026-11-11 — session behavior: a real model's survey that was missed (4 sessions added)
 
 The 2026-11-11 bait pass recorded the miss above: `gemma4:31b` was asked for a host

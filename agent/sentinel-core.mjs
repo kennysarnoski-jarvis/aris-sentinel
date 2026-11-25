@@ -1317,14 +1317,16 @@ export function createBehaviorTracker({
   minCategories = BEHAVIOR.categories,
   minSensitive = BEHAVIOR.sensitive,
   maxSessions = 2000,
+  services = behaviorServices(),
   now = Date.now,
 } = {}) {
   const sessions = new Map(); // key -> { seen: Map<area, lastAt>, times: number[], members: Map<member, lastAt>, reported: boolean }
   const enabled = windowMs > 0;
 
   // `member` names who contributed the command when `key` stands for several sessions (an
-  // origin): the hit then says how many of them the window holds.
-  function observe(key, command, member) {
+  // origin): the hit then says how many of them the window holds. `rule` is the pair of
+  // counts this key is held to when it is not the tracker's own (a service's session).
+  function observe(key, command, member, rule) {
     if (!enabled || key === undefined || key === null || key === "") return null;
     const areas = Array.isArray(command) ? command : behaviorCategories(command); // already read, or shell text to read
     if (!areas.length) return null;
@@ -1348,7 +1350,7 @@ export function createBehaviorTracker({
 
     const categories = [...st.seen.keys()].sort();
     const sensitive = categories.filter((c) => BEHAVIOR_CATEGORIES[c].sensitive);
-    if (st.reported || categories.length < minCategories || sensitive.length < minSensitive) return null;
+    if (st.reported || categories.length < (rule?.categories ?? minCategories) || sensitive.length < (rule?.sensitive ?? minSensitive)) return null;
     st.reported = true;
     const pauses = st.times.slice(1).map((x, i) => x - st.times[i]).filter((gap) => gap >= BEHAVIOR.stepMs);
     return { kind: "sweep", categories, sensitive, commands: st.times.length, steps: pauses.length + 1, spanMs: t - st.times[0], medianGapMs: median(pauses), ...(st.members.size ? { sessions: st.members.size } : {}) };
@@ -1361,7 +1363,7 @@ export function createBehaviorTracker({
     return { categories, sensitive: categories.filter((c) => BEHAVIOR_CATEGORIES[c].sensitive), commands: st ? st.times.length : 0, reported: !!st?.reported };
   }
 
-  return { observe, peek, forget: (key) => sessions.delete(String(key)), size: () => sessions.size, enabled, windowMs };
+  return { observe, peek, forget: (key) => sessions.delete(String(key)), size: () => sessions.size, enabled, windowMs, services };
 }
 
 // Where a session came from. Found on a real host (2026-11-21): a host survey run in one
@@ -1395,6 +1397,84 @@ export function behaviorOrigin(facts) {
   return client ? { key: `ssh:${who}@${client}`, what: `SSH logins of ${who} from ${client}` } : { key: `ssh:${who}`, what: `SSH logins of ${who}` };
 }
 
+// Who a session's commands descend from. Read on 2026-11-24 in the source of three
+// open-source attack frameworks (README, "The limit"): the model stays on the operator's
+// side and what reaches a host is a bare command, sent through whatever the operator has
+// got into. Most often that is a web application, and then the command is a child of the
+// program that serves it. An intruder's first questions through such a hole are few (who am
+// I, what is this box, what may I run as root) and stop short of the five areas a sweep
+// takes: the checks one framework's own skill file lists were three areas, one of them
+// sensitive, and were not reported (corpus/README.md, 2026-11-24).
+//
+// A program that serves a web application does not ordinarily ask those questions. It
+// resizes an image, asks git for a revision, checks free disk. So a session whose commands
+// descend from one is held to a lower count: BEHAVIOR_SERVICE areas, one of them sensitive,
+// in the same window. Everything else about the policy is unchanged: it is an ALERT and
+// never a kill, it is reported once per window, and the tracker keeps area names and times.
+//
+// Two lists of program names, because a name is all there is to go on:
+//   servers   a program whose job is serving requests (a web or application server, a
+//             database). Counted whoever started it.
+//   runtimes  a general-purpose runtime (java, node, python, …). The same binary is a web
+//             application on one host and a developer's build tool on the next, so it is
+//             counted only when the facts say NOBODY LOGGED IN to start it (`noLogin`:
+//             the kernel's audit login id is unset, as it is for a service and a container).
+// A host adds or removes names with ARIS_BEHAVIOR_SERVICES (`name` adds a server, `-name`
+// removes a name from both lists, `off` turns the rule off).
+//
+// What it costs, stated: a service whose job IS running other people's commands (a CI
+// server, a hosting control panel) is reported for doing it
+// (corpus/behavior/benign_service_ci_build_java.jsonl, on purpose). What it does not see: an
+// application served by a program on neither list (a Go or Rust binary, a renamed process),
+// a runtime on a kernel without audit login ids, and anything on Windows, where the agent
+// has no process ancestry.
+export const BEHAVIOR_SERVICE = Object.freeze({ categories: 3, sensitive: 1 });
+const SERVICE_SERVERS = Object.freeze([
+  "nginx", "apache", "httpd", "lighttpd", "caddy", "openresty", "lshttpd", "litespeed", "php-fpm", "php-cgi", "lsphp",
+  "uwsgi", "gunicorn", "uvicorn", "hypercorn", "daphne", "unicorn", "puma", "next-server",
+  "postgres", "mysqld", "mariadbd", "mongod", "redis-server",
+]);
+const SERVICE_RUNTIMES = Object.freeze(["java", "node", "nodejs", "python", "ruby", "php", "dotnet", "bun", "deno", "beam.smp"]);
+const SERVICE_LINEAGE_MAX = 16;
+// A process name as the kernel reports it, reduced to what the lists hold: the first word,
+// lower case, without a trailing version ("php-fpm8.3" and "apache2" are "php-fpm" and "apache").
+const serviceName = (v) => {
+  const word = typeof v === "string" ? v.trim().toLowerCase().split(/\s/)[0] : "";
+  return /^[a-z0-9][a-z0-9._+-]{0,31}$/.test(word) ? word.replace(/[\d.]+$/, "") : "";
+};
+
+/** The two name lists a host uses, from the published ones and ARIS_BEHAVIOR_SERVICES. */
+export function behaviorServices(env = process.env) {
+  const servers = new Set(SERVICE_SERVERS);
+  const runtimes = new Set(SERVICE_RUNTIMES);
+  let enabled = true;
+  for (const raw of String(env?.ARIS_BEHAVIOR_SERVICES ?? "").split(/[\s,]+/).filter(Boolean)) {
+    if (/^(off|none|0)$/i.test(raw)) { enabled = false; continue; }
+    const drop = raw.startsWith("-");
+    const name = serviceName(drop ? raw.slice(1) : raw);
+    if (!name) continue;
+    if (drop) { servers.delete(name); runtimes.delete(name); } else { runtimes.delete(name); servers.add(name); }
+  }
+  return Object.freeze({ enabled, servers, runtimes });
+}
+
+/**
+ * The service a session's commands descend from, or null. `facts.lineage` is the names of
+ * the processes above the command, nearest first; `facts.entry` (the one just below init) is
+ * read after them. The nearest name on a list is the answer.
+ */
+export function behaviorService(facts, services = behaviorServices()) {
+  if (!facts || typeof facts !== "object" || !services?.enabled) return null;
+  const names = [...(Array.isArray(facts.lineage) ? facts.lineage.slice(0, SERVICE_LINEAGE_MAX) : []), facts.entry];
+  for (const raw of names) {
+    const name = serviceName(raw);
+    if (!name) continue;
+    if (services.servers.has(name)) return { name, tier: "server", what: `${name} (a program that serves requests)` };
+    if (services.runtimes.has(name) && facts.noLogin === true) return { name, tier: "runtime", what: `${name} (started without anybody logging in)` };
+  }
+  return null;
+}
+
 // Behavior policy, applied around the narration decision of decideSession(): a sweep turns
 // an allow into an alert and is recorded on a block; it never makes or prevents a kill.
 // `opts.behavior` is the tracker (no tracker, no signal) and `opts.command` is the command
@@ -1404,12 +1484,31 @@ export function behaviorOrigin(facts) {
 // session came from (see behaviorOrigin); a command counts for its session and for its origin.
 // One sweep is one report: the session's own when it has one (`scope: "session"`), else the
 // origin's (`scope: "origin"`), and a session is not reported again for a sweep its origin
-// has already been reported for in this window.
+// has already been reported for in this window. A session that descends from a service
+// (behaviorService) is reported at the lower count, as `kind: "service"`.
 export function observeBehavior(tracker, sessionKey, command, originFacts, { exec = false } = {}) {
   if (!tracker) return null;
   command = behaviorCategories(command, { exec }); // read once, counted for the session and the origin
+  const keyed = sessionKey !== undefined && sessionKey !== null && sessionKey !== "";
+  // A command that descends from a service also counts in a window of its own, held to the
+  // lower count. Its own, because a session can hold both kinds: a server started from a
+  // terminal shares that terminal's session, and what its owner types there must not be
+  // reported as the server's doing. One look is one report: the sweep when the session has
+  // one, else the service's, and neither again while the other's report is in the window.
+  const service = keyed ? behaviorService(originFacts, tracker.services) : null;
+  const swept = service ? tracker.peek(sessionKey).reported : false;
   let hit = tracker.observe(sessionKey, command);
-  const origin = sessionKey !== undefined && sessionKey !== null && sessionKey !== "" ? behaviorOrigin(originFacts) : null;
+  if (service) {
+    const key = `service:${sessionKey}`;
+    const told = tracker.peek(key).reported;
+    const narrow = tracker.observe(key, command, undefined, BEHAVIOR_SERVICE);
+    if (hit) { if (told) hit = null; }
+    else if (narrow && !swept) hit = { ...narrow, kind: "service", service: service.name, serviceWhat: service.what };
+  }
+  // A service's commands are not the doing of whoever logged in above it (a server started by
+  // hand from an SSH session): they are not counted for that login's origin, and a report the
+  // origin already has does not cover them. Found live, 2026-11-24.
+  const origin = keyed && !service ? behaviorOrigin(originFacts) : null;
   if (origin) {
     const key = `origin:${origin.key}`;
     const covered = tracker.peek(key).reported;
@@ -1425,15 +1524,17 @@ async function withBehavior(sessionKey, raw, opts, next) {
   const d = await next();
   if (!hit) return d;
   const what = `${hit.categories.length} areas of the host in ${Math.round(hit.spanMs / 1000)}s (${hit.categories.join(", ")}; sensitive: ${hit.sensitive.join(", ")})`;
-  const who = hit.scope === "origin" ? `${hit.sessions} sessions from one origin (${hit.origin}) together` : "this session";
-  if (d.decision === "block") return { ...d, behavior: hit, reason: `${d.reason}; behavior: ${hit.scope === "origin" ? who : "the session"} had also swept ${what}` };
+  const service = hit.kind === "service";
+  const who = hit.scope === "origin" ? `${hit.sessions} sessions from one origin (${hit.origin}) together` : service ? `a session whose commands descend from ${hit.serviceWhat}` : "this session";
+  const did = service ? "asked about" : "swept";
+  if (d.decision === "block") return { ...d, behavior: hit, reason: `${d.reason}; behavior: ${hit.scope === "origin" || service ? who : "the session"} had also ${did} ${what}` };
   return {
     ...d,
     decision: "alert",
     viaBehavior: true,
     behavior: hit,
-    signals: [...d.signals, "behavior_sweep"],
-    reason: `behavior: ${who} swept ${what} over ${hit.commands} commands in ${hit.steps} step${hit.steps === 1 ? "" : "s"} -> alert, never a kill (${d.reason})`,
+    signals: [...d.signals, service ? "behavior_service" : "behavior_sweep"],
+    reason: `behavior: ${who} ${did} ${what} over ${hit.commands} commands in ${hit.steps} step${hit.steps === 1 ? "" : "s"} -> alert, never a kill (${d.reason})`,
   };
 }
 

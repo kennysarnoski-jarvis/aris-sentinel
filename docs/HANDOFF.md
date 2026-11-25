@@ -524,3 +524,32 @@ Session kill, not done: the validation used no judge (session alert path only; t
 path is covered by `bun run sessions` on real judges, not on a kernel). Windows has no
 session kill beyond `taskkill /T` on the PowerShell process.
 
+**Commands that descend from a service (2026-11-24).** Three open-source attack frameworks
+were read at source (README, "The limit"): the model stays off the host and bare commands
+arrive through a web application. The host checks one of them lists are three areas with
+one sensitive, which is no sweep. `behaviorService` + `BEHAVIOR_SERVICE` (core) report a
+command that descends from a listed server, or from a listed runtime nobody logged in to
+start, at three areas with one sensitive, in a window of its own (`service:<session>`).
+The Linux agent reads the lineage per exec from the event (`lineageOf`, `behaviorFacts`);
+the capture rule now emits `proc.aname[2..4]` and `user.loginuid`. By the corpus rule:
+eight sessions added, eight of eight predictions held as-is and with the rule, no existing
+snapshot row moved (163 rows, 46 behavior sessions, 573 unit tests). Sixteen deliberate
+breaks of the new guards were each caught by a test.
+
+- Verified live the same day (demo VM, kernel 6.8.0-147, Falco 0.45.2): the capture rule's
+  new fields arrive as `proc.aname[2]`… with `-1` for an unset login id;
+  `validate-behavior.sh` 41/41 on three consecutive runs; `validate-session-kill.sh` 24/24
+  and `validate-tripwire.sh` 26/26 on the same code.
+- The first live run was 30 of 38 and found two things. (1) `validate-behavior.sh` had been
+  failing 6 of 29 since 2026-11-21 (main at `e13c1c0`: 23 of 29): its sessions were all
+  children of the one SSH login running it, so one origin, and the first report covered
+  the rest. They are now started detached, and scenario 12 checks the origin on purpose.
+  (2) For the same reason a login's report covered a server's commands started under it.
+  The core no longer counts a service's commands for the origin above them.
+- Measured small: `docs/demo-kill/soak-services.sh` (new), packaged servers for a few
+  minutes, 0 reports, phpsysinfo one sensitive area short. Not a day of traffic; no CI
+  server or control panel in it. It also recorded four escalate-band narration alerts on
+  netdata's own scripts with no judge configured; not followed up.
+- Fixed in passing: `test/behavior.ts` printed "areas at the end of the window: none" for
+  every file, because it peeked a session key no session has.
+

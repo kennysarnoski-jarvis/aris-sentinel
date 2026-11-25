@@ -125,6 +125,9 @@ limactl shell aris-demo -- sudo bash /Volumes/ArisLLM/Projects-Archive/aris-sent
 ```
 
 **Run live on 2026-11-10: 29/29**, three times in a row on the final code (kernel 6.8.0-147, Falco 0.45.2,
+**Run live again on 2026-11-24: 41/41**, three times in a row, with scenarios 9 to 11 (a service's commands) and 12 (two sessions from one SSH login are one report) added. Before that day's fixes the script was 23 of 29 on the code as it stood: every scenario came from the one SSH login running the script, and since 2026-11-21 that login's first report covered the rest. Its sessions are now started apart from that login. `validate-session-kill.sh` (24/24) and `validate-tripwire.sh` (26/26) were re-run the same day on the same code.
+
+`soak-services.sh` is the service rule's counterpart to `soak-behavior.sh`: packaged servers and two host-inspecting web applications under the agent in monitor mode, and a table of what each service's commands asked about. A measurement, not a pass or fail; 0 reports on 2026-11-24.
 Node 18.19, 2 CPU / 4 GB). The first run passed as written (28/28) and its incident log
 still held a finding. The alert reported the median gap between commands, and for the
 chained sweep that gap was one millisecond: on a real host `bash -c 'id; uname -a'` is

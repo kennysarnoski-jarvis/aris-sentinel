@@ -63,7 +63,7 @@ payload — in phase 1, before anything is encrypted.
 Aris keys on that narration. It reads the *attacker's* LLM output, not the customer's
 code — so the same detector ships to every customer with **zero per-corp tuning.**
 
-## The moat: to evade Aris, the attacker has to make itself dumber
+## The moat: to evade Aris, an agent on the host has to make itself dumber
 
 The obvious counter is "train the model to narrate less." Here's why that's a trap:
 **agents narrate because narrating makes them work better** — chain-of-thought *is* the
@@ -75,6 +75,19 @@ attacker.** The choice is forced:
 
 That tension is the defensibility. We don't have to win a signature arms race; the
 attacker's own capability requirement fights on our side.
+
+**Where this does not hold (added 2026-11-24).** The tension needs the agent's thinking
+and its commands to arrive in the same place. That is true of an agent that runs on the
+victim (JADEPUFFER's payloads carried their own plan) and of one that ships there the
+scripts it wrote. It is not true of a framework that keeps its model on the attacker's
+side and sends in only the commands: that agent narrates as much as it likes where a host
+agent cannot read it, and is no worse for it. We read the source of three open-source
+frameworks (PentAGI `cffed94`, Strix `935f823`, HexStrike AI `d689933`; nothing was run)
+and all three are built that way. One of them makes the model write a commentary with
+every command and stores it in its own log. Until this date this section stated the
+tension as if it bound every agentic attacker. It binds the ones whose words reach the
+host. Against the others the narration detector has no moat, and what Sentinel has is the
+tripwire and session behavior, each with the limits the README measures.
 
 ## The asymmetry: refusing to judge is itself a conviction
 
@@ -177,7 +190,8 @@ Huntress all started) — high-touch, builds design-partner trust, defers self-s
   number in this document comes from models that were not told a detector was present.
   An attacker who knows can tell the model to keep quiet (the narration limit above), to
   leave anything that looks like a decoy alone, and to take its time (the behavior limit).
-  Each of those has a price: a quieter agent works worse, a careful one gives up what the
+  Each of those has a price: a quieter agent working on the host works worse (one whose
+  model stays outside pays nothing, see "The moat"), a careful one gives up what the
   decoy offered, a slow one is slow. That price is the claim, and how high it is has not
   been measured. What is specific to a host is not in the repository: its token, and its
   decoys' wording, names and places, which each host can now set for itself because the
@@ -188,10 +202,12 @@ Huntress all started) — high-touch, builds design-partner trust, defers self-s
 - **No margin from weak models:** this document once leaned on "open models aren't that
   good yet". Attackers are already using frontier models through stolen access (see the
   section on the attacker's model), so there is no such margin to count on. The moat
-  rests on the narrate-or-be-worse tension, not on the attacker's model being weak.
+  rests on the narrate-or-be-worse tension, not on the attacker's model being weak, and
+  that tension exists only where the agent's words reach the host (see "The moat").
 - **The evidence for narration is narrow:** it is Sysdig's JADEPUFFER report, our own
   corpus, and the models we measured. Google's November 2026 report shows no payloads, so
-  it neither confirms nor contradicts that the frameworks it describes narrate. Most of
+  it neither confirms nor contradicts that the frameworks it describes narrate. The three
+  open-source frameworks whose source we read do narrate, and keep it off the host. Most of
   what that report covers also happens where a host agent cannot see it: a web
   application exploited from outside, stolen cloud and model credentials used through an
   API, phishing. Sentinel starts seeing an intrusion when a command runs on the host.

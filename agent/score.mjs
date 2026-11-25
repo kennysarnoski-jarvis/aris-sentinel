@@ -23,7 +23,7 @@
 
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { inspect, decide, decideSession, createSessionTracker, createBehaviorTracker, behaviorCategories, bearsNarration, narrationScore, hasTier2, providers, SESSION_THRESHOLD } from "./sentinel-core.mjs";
+import { inspect, decide, decideSession, createSessionTracker, createBehaviorTracker, behaviorCategories, observeBehavior, bearsNarration, narrationScore, hasTier2, providers, SESSION_THRESHOLD } from "./sentinel-core.mjs";
 
 const RANK = { clear: 0, allow: 0, escalate: 1, alert: 1, block: 2 };
 
@@ -58,7 +58,7 @@ export function format(name, e) {
 function sessionInputs(files) {
   return files.flatMap((f) =>
     f.endsWith(".jsonl")
-      ? readFileSync(f, "utf8").split("\n").filter(Boolean).map((l, i) => { const row = JSON.parse(l); return [`${f}#${i + 1}`, String(row.payload ?? ""), row.t]; })
+      ? readFileSync(f, "utf8").split("\n").filter(Boolean).map((l, i) => { const row = JSON.parse(l); return [`${f}#${i + 1}`, String(row.payload ?? ""), row.t, row]; })
       : [[f, readFileSync(f, "utf8")]],
   );
 }
@@ -66,16 +66,20 @@ function sessionInputs(files) {
 async function sessionMain(files, { json, full }) {
   const sessions = createSessionTracker({ ttlMs: 3_600_000, maxItems: 64 });
   const steps = [];
-  let win = null, worst = 0, reachedAt = null, sweptAt = null;
+  let win = null, worst = 0, reachedAt = null, sweptAt = null, sweptKind = null;
   // Session behavior (the agents' opt-in --behavior): the areas of the host each command asks
   // about. A line's own "t" (seconds) is the clock; without one the session is taken as fast.
   let clock = 0;
   const behavior = createBehaviorTracker({ now: () => clock });
-  for (const [name, text, t] of sessionInputs(files)) {
+  // A .jsonl line may also say `"exec": true` (the payload is one process's command line) and
+  // carry `"origin"` facts, as corpus/behavior does; a service's commands are then held to
+  // the lower count, as the agent would hold them.
+  for (const [name, text, t, row] of sessionInputs(files)) {
     if (Number.isFinite(t)) clock = Math.round(t * 1000);
-    const areas = behaviorCategories(text);
-    const sweep = behavior.observe("cli", text);
-    if (sweep && sweptAt === null) sweptAt = steps.length + 1;
+    const exec = row?.exec === true;
+    const areas = behaviorCategories(text, { exec });
+    const sweep = observeBehavior(behavior, "cli", text, row?.origin ?? null, { exec });
+    if (sweep && sweptAt === null) { sweptAt = steps.length + 1; sweptKind = sweep.kind; }
     if (sweep) worst = Math.max(worst, RANK.alert);
     const d = full ? await decideSession("cli", text, { sessions }) : null;
     const e = explain(text, d && !d.viaSession ? { decideResult: d } : {});
@@ -89,13 +93,13 @@ async function sessionMain(files, { json, full }) {
     if (!json) {
       console.log(format(name, e));
       if (areas.length) console.log(`  asks about: ${areas.join(", ")}`);
-      if (sweep) console.log(`  >> BEHAVIOR: the session has now asked about ${sweep.categories.length} areas of the host in ${Math.round(sweep.spanMs / 1000)}s, ${sweep.steps} step${sweep.steps === 1 ? "" : "s"} (sensitive: ${sweep.sensitive.join(", ")}) -> ALERT with --behavior on, never a kill`);
+      if (sweep) console.log(`  >> BEHAVIOR: ${sweep.kind === "service" ? `commands that descend from ${sweep.serviceWhat} have` : "the session has"} now asked about ${sweep.categories.length} areas of the host in ${Math.round(sweep.spanMs / 1000)}s, ${sweep.steps} step${sweep.steps === 1 ? "" : "s"} (sensitive: ${sweep.sensitive.join(", ")}) -> ALERT with --behavior on, never a kill`);
       if (via) console.log(`  >> SESSION: ${via.size} payloads together score ${via.score.toFixed(2)} [${via.signals.join(", ")}]` + (via.decision ? ` -> ${via.decision.toUpperCase()}  ${via.reason}${via.judge?.reasoning ? `\n     judge: ${via.judge.reasoning}` : ""}` : ` -> reaches the judge (>= ${SESSION_THRESHOLD.toFixed(2)})`));
       console.log();
     }
   }
   if (json) console.log(JSON.stringify({ session: true, reachedJudgeAtStep: reachedAt, behaviorSweepAtStep: sweptAt, steps }, null, 2));
-  else if (sweptAt || behavior.peek("cli").categories.length) console.log(sweptAt ? `behavior: the session is a sweep at step ${sweptAt} of ${steps.length}` : `behavior: no sweep (areas asked about: ${behavior.peek("cli").categories.join(", ")})`);
+  else if (sweptAt || behavior.peek("cli").categories.length) console.log(sweptAt ? `behavior: ${sweptKind === "service" ? "a service's commands are reported" : "the session is a sweep"} at step ${sweptAt} of ${steps.length}` : `behavior: no sweep (areas asked about: ${behavior.peek("cli").categories.join(", ")})`);
   if (!json) console.log(reachedAt ? `session: evidence reached the judge at step ${reachedAt} of ${steps.length}` : `session: ${steps.length} steps, never reached the session threshold (${SESSION_THRESHOLD.toFixed(2)})`);
   process.exitCode = worst;
 }

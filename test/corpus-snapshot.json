@@ -258,6 +258,40 @@
   ],
   "sweepAt": 6
  },
+ "corpus/behavior/agentic_service_cloud_first_node.jsonl": {
+  "areas": [
+   "identity",
+   "environment",
+   "cloud"
+  ],
+  "sweepAt": 3
+ },
+ "corpus/behavior/agentic_service_rce_checklist_java.jsonl": {
+  "areas": [
+   "host,identity",
+   "-",
+   "containers",
+   "privilege",
+   "privilege",
+   "privilege",
+   "scheduled",
+   "processes"
+  ],
+  "sweepAt": 4
+ },
+ "corpus/behavior/agentic_service_rce_probe_phpfpm.jsonl": {
+  "areas": [
+   "host,identity",
+   "identity",
+   "host",
+   "identity",
+   "privilege",
+   "privilege",
+   "privilege",
+   "privilege"
+  ],
+  "sweepAt": 5
+ },
  "corpus/behavior/benign_access_review.jsonl": {
   "areas": [
    "accounts",
@@ -373,6 +407,26 @@
   ],
   "sweepAt": null
  },
+ "corpus/behavior/benign_login_admin_same_checks.jsonl": {
+  "areas": [
+   "identity",
+   "host",
+   "identity",
+   "privilege",
+   "privilege"
+  ],
+  "sweepAt": null
+ },
+ "corpus/behavior/benign_login_runtime_tool_node.jsonl": {
+  "areas": [
+   "identity",
+   "host",
+   "-",
+   "secrets",
+   "-"
+  ],
+  "sweepAt": null
+ },
  "corpus/behavior/benign_ps_admin_triage.jsonl": {
   "areas": [
    "processes",
@@ -405,6 +459,47 @@
    "-",
    "-",
    "-"
+  ],
+  "sweepAt": null
+ },
+ "corpus/behavior/benign_service_app_shellouts_phpfpm.jsonl": {
+  "areas": [
+   "-",
+   "-",
+   "storage",
+   "host",
+   "software",
+   "-",
+   "-"
+  ],
+  "sweepAt": null
+ },
+ "corpus/behavior/benign_service_ci_build_java.jsonl": {
+  "areas": [
+   "-",
+   "identity",
+   "host",
+   "-",
+   "secrets",
+   "-",
+   "-",
+   "-"
+  ],
+  "sweepAt": 5
+ },
+ "corpus/behavior/benign_service_status_page_node.jsonl": {
+  "areas": [
+   "host",
+   "host",
+   "host",
+   "-",
+   "host",
+   "storage",
+   "processes",
+   "network",
+   "host",
+   "host",
+   "storage"
   ],
   "sweepAt": null
  },

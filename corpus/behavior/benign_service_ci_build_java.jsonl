@@ -1,0 +1,8 @@
+{"t": 0, "exec": true, "origin": {"entry": "java", "entryPid": 1377, "login": null, "noLogin": true, "user": "jenkins", "lineage": ["sh", "java"]}, "payload": "sh -xe /tmp/jenkins4410.sh"}
+{"t": 0.02, "exec": true, "origin": {"entry": "java", "entryPid": 1377, "login": null, "noLogin": true, "user": "jenkins", "lineage": ["sh", "java"]}, "payload": "whoami"}
+{"t": 0.05, "exec": true, "origin": {"entry": "java", "entryPid": 1377, "login": null, "noLogin": true, "user": "jenkins", "lineage": ["sh", "java"]}, "payload": "uname -a"}
+{"t": 0.3, "exec": true, "origin": {"entry": "java", "entryPid": 1377, "login": null, "noLogin": true, "user": "jenkins", "lineage": ["sh", "java"]}, "payload": "git rev-parse HEAD"}
+{"t": 1.2, "exec": true, "origin": {"entry": "java", "entryPid": 1377, "login": null, "noLogin": true, "user": "jenkins", "lineage": ["sh", "java"]}, "payload": "ls -la /var/lib/jenkins/.ssh"}
+{"t": 1.5, "exec": true, "origin": {"entry": "java", "entryPid": 1377, "login": null, "noLogin": true, "user": "jenkins", "lineage": ["sh", "java"]}, "payload": "ssh-add -l"}
+{"t": 3.0, "exec": true, "origin": {"entry": "java", "entryPid": 1377, "login": null, "noLogin": true, "user": "jenkins", "lineage": ["sh", "java"]}, "payload": "docker build -t app:4410 ."}
+{"t": 95, "exec": true, "origin": {"entry": "java", "entryPid": 1377, "login": null, "noLogin": true, "user": "jenkins", "lineage": ["sh", "java"]}, "payload": "docker push registry.example/app:4410"}

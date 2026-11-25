@@ -35,6 +35,8 @@
 //        ARIS_TRIPWIRE_README (a file with this host's own decoy text; {{command}} marks the command)
 //        ARIS_TRIPWIRE_HELPER / ARIS_TRIPWIRE_FLAG (this host's own names for the helper and its option)
 //        ARIS_BEHAVIOR_WINDOW_MS (the --behavior window, default 300000)
+//        ARIS_BEHAVIOR_SERVICES (--behavior: program names this host counts as a service;
+//          `name` adds one, `-name` removes one, `off` turns the service rule off)
 //        ARIS_TIER2_TIMEOUT_MS / _DEADLINE_MS / _CACHE_TTL_MS / _CONCURRENCY / _BUDGET_PER_MIN
 //
 // Decisions (see sentinel-core.mjs):
@@ -48,7 +50,9 @@
 //   narration and no judge); the decoy merely addressed → alert.
 //   With --behavior: a session that asks about enough areas of the host inside one window
 //   (who am I, what runs here, the account database, what may I run as root…) → alert.
-//   A look, not an act: never a kill, in any mode.
+//   A look, not an act: never a kill, in any mode. Commands that descend from a web or
+//   application server (or from a runtime nobody logged in to start) are reported at a
+//   lower count: a server's child has less reason to ask.
 
 import { spawn } from "node:child_process";
 import { readFileSync, appendFileSync, readdirSync, statSync } from "node:fs";
@@ -56,7 +60,7 @@ import { basename, isAbsolute, resolve as resolvePath } from "node:path";
 import { hostname } from "node:os";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
-import { armTripwire, BEHAVIOR, behaviorCategories, createBehaviorTracker, createTripwire, decide, decideSession, defaultSessions, disarmTripwire, enrollJudge, hasTier2, judgeStateFile, newTripwireToken, providers, providerWarnings, tripwireDecoy, tripwireLookFromEnv } from "./sentinel-core.mjs";
+import { armTripwire, BEHAVIOR, BEHAVIOR_SERVICE, behaviorCategories, createBehaviorTracker, createTripwire, decide, decideSession, defaultSessions, disarmTripwire, enrollJudge, hasTier2, judgeStateFile, newTripwireToken, providers, providerWarnings, tripwireDecoy, tripwireLookFromEnv } from "./sentinel-core.mjs";
 
 // SAFE BY DEFAULT: the agent detects + alerts + logs but NEVER kills unless you pass
 // --enforce. A false positive can't take down a customer's prod on day one; you flip
@@ -176,6 +180,13 @@ function procLoginUid(pid) {
   try {
     const n = Number(readFileSync(`/proc/${pid}/loginuid`, "utf8").trim());
     return Number.isInteger(n) && n >= 0 && n !== 4294967295 ? n : null; // 2^32-1: never logged in
+  } catch { return null; }
+}
+/** true when nobody logged in to start this process (a service, a container), false when somebody did, null when it cannot be read. */
+function procNoLogin(pid) {
+  try {
+    const n = Number(readFileSync(`/proc/${pid}/loginuid`, "utf8").trim());
+    return Number.isInteger(n) && n >= 0 ? n === 4294967295 : null;
   } catch { return null; }
 }
 /** The SSH client's address, from the SSH_CONNECTION sshd puts in a session's environment. */
@@ -380,7 +391,7 @@ function respond(f, d, payload) {
   // `alert` is never a kill: tier 2 could not judge it, so we page a human instead.
   const guard = d.decision === "block" ? isProtected(p.pid, p.exe) : null;
   const action =
-    d.decision === "alert" ? (d.viaTripwire ? "ALERT (decoy addressed, not run — no kill)" : d.viaBehavior ? (d.behavior?.scope === "origin" ? "ALERT (sessions from one origin swept the host together — no kill)" : "ALERT (the session swept the host — no kill)") : "ALERT (tier-2 unavailable — no kill)")
+    d.decision === "alert" ? (d.viaTripwire ? "ALERT (decoy addressed, not run — no kill)" : d.viaBehavior ? (d.behavior?.scope === "origin" ? "ALERT (sessions from one origin swept the host together — no kill)" : d.behavior?.kind === "service" ? "ALERT (a service's commands looked around the host — no kill)" : "ALERT (the session swept the host — no kill)") : "ALERT (tier-2 unavailable — no kill)")
     : !deps.mode.enforce ? "DETECTED (monitor — no kill)"
     : guard ? `SPARED (${guard})`
     : "KILL";
@@ -532,6 +543,7 @@ export const deps = {
   procName: (pid) => procStatus(pid)?.name ?? "",
   procParent: (pid) => procStatus(pid)?.ppid ?? null,
   loginUid: procLoginUid,
+  noLogin: procNoLogin,
   sshClient: procSshClient,
   userName,
   killPid: (pid) => process.kill(pid, "SIGKILL"),
@@ -563,13 +575,43 @@ export function originOf(f) {
     const top = chain[chain.length - 1];
     if (!top || deps.procParent(top) !== 1) continue; // broken by a process that already exited
     const login = deps.loginUid(start);
-    facts = { entry: deps.procName(top), entryPid: top, login: login === null ? null : deps.userName(login), user: f["user.name"] ?? null, client: deps.sshClient(start) ?? deps.sshClient(sid) };
+    facts = { entry: deps.procName(top), entryPid: top, login: login === null ? null : deps.userName(login), noLogin: deps.noLogin(start), user: f["user.name"] ?? null, client: deps.sshClient(start) ?? deps.sshClient(sid) };
     break;
   }
   origins.delete(sid);
   origins.set(sid, { at: t, facts });
   while (origins.size > ORIGIN_MAX) origins.delete(origins.keys().next().value);
   return facts;
+}
+
+// ── who a command descends from ─────────────────────────────────────────────
+// Facts for the core's service rule (behaviorService): the names of the processes above
+// this exec, nearest first, and whether anybody logged in to start it. Both come from the
+// sensor's own event when the capture rule emits them (`proc.aname[N]`, `user.loginuid`):
+// that is the process tree as it stood at the exec, with nothing to race. They are read per
+// exec and never kept, because one session can hold a server's children and its owner's own
+// commands. With an older capture rule only the parent's name is in the event; the session's
+// origin then supplies the process just below init and the login id it read from /proc,
+// which is enough for a service that systemd starts and not for one inside a container.
+const LINEAGE_DEPTH = 4;
+const noValue = (v) => v === undefined || v === null || v === "" || v === "<NA>";
+export function lineageOf(f) {
+  const names = [f["proc.pname"]];
+  for (let i = 2; i <= LINEAGE_DEPTH; i++) names.push(f[`proc.aname[${i}]`]);
+  return names.filter((n) => typeof n === "string" && !noValue(n));
+}
+/** Falco reports an unset audit login id as -1 (the kernel's own value is 2^32-1). */
+function noLoginOfEvent(f) {
+  const v = f["user.loginuid"];
+  if (noValue(v)) return null;
+  const n = Number(v);
+  return Number.isInteger(n) ? n === -1 || n === 4294967295 : null;
+}
+export function behaviorFacts(f) {
+  const origin = originOf(f);
+  const lineage = lineageOf(f);
+  if (!origin && !lineage.length) return null;
+  return { ...(origin ?? {}), lineage, noLogin: noLoginOfEvent(f) ?? origin?.noLogin ?? null };
 }
 
 // ── event handling ───────────────────────────────────────────────────────────
@@ -593,7 +635,7 @@ export async function handleEvent(f) {
   let d;
   // Behavior reads the command line alone: the script file appended for the narration
   // scorer is text the session may never run, and its own commands arrive as their own execs.
-  try { d = await deps.decide(payload, sessionKeyOf(f), { cwd: f["proc.cwd"], command: f["proc.cmdline"] || "", origin: deps.behavior ? originOf(f) : null }); } catch (e) { return respondError(f, e, payload); }
+  try { d = await deps.decide(payload, sessionKeyOf(f), { cwd: f["proc.cwd"], command: f["proc.cmdline"] || "", origin: deps.behavior ? behaviorFacts(f) : null }); } catch (e) { return respondError(f, e, payload); }
   if (d.decision === "block" || d.decision === "alert") return respond(f, d, payload);
   // With --behavior the verbose line also says which areas of the host the command asked
   // about, so an operator can see what a session's window holds before it is ever reported.
@@ -662,7 +704,7 @@ function main() {
   if (BEHAVIOR_ON) {
     deps.behavior = createBehaviorTracker();
     if (!deps.behavior.enabled) log(`  session behavior: OFF (--behavior was passed, but ARIS_BEHAVIOR_WINDOW_MS=0 turns it off)`);
-    else log(`  session behavior: ON (a session, or the SSH logins of one account from one address together, asking about ${BEHAVIOR.categories}+ areas of the host, ${BEHAVIOR.sensitive}+ of them sensitive, inside ${Math.round(deps.behavior.windowMs / 1000)}s -> alert, never a kill)`);
+    else log(`  session behavior: ON (a session, or the SSH logins of one account from one address together, asking about ${BEHAVIOR.categories}+ areas of the host, ${BEHAVIOR.sensitive}+ of them sensitive, inside ${Math.round(deps.behavior.windowMs / 1000)}s -> alert, never a kill; ${deps.behavior.services.enabled ? `commands that descend from a service at ${BEHAVIOR_SERVICE.categories}+ and ${BEHAVIOR_SERVICE.sensitive}+` : "the service rule is OFF (ARIS_BEHAVIOR_SERVICES)"})`);
   } else log(`  session behavior: off (pass --behavior to report sessions that sweep the host)`);
   log(`  cloud alerts: ${CLOUD_URL ? `-> ${CLOUD_URL} (Telegram via Aris Cloud)` : "disabled (set ARIS_CLOUD_URL)"}`);
   log(`  incidents -> ${INCIDENT_LOG}`);

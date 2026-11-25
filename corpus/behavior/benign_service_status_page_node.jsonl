@@ -1,0 +1,11 @@
+{"t": 0, "exec": true, "origin": {"entry": "node", "entryPid": 1420, "login": null, "noLogin": true, "user": "status", "lineage": ["node"]}, "payload": "uname -a"}
+{"t": 0.3, "exec": true, "origin": {"entry": "node", "entryPid": 1420, "login": null, "noLogin": true, "user": "status", "lineage": ["node"]}, "payload": "hostname"}
+{"t": 0.6, "exec": true, "origin": {"entry": "node", "entryPid": 1420, "login": null, "noLogin": true, "user": "status", "lineage": ["node"]}, "payload": "uptime"}
+{"t": 0.9, "exec": true, "origin": {"entry": "node", "entryPid": 1420, "login": null, "noLogin": true, "user": "status", "lineage": ["node"]}, "payload": "cat /proc/loadavg"}
+{"t": 1.2, "exec": true, "origin": {"entry": "node", "entryPid": 1420, "login": null, "noLogin": true, "user": "status", "lineage": ["node"]}, "payload": "free -m"}
+{"t": 1.5, "exec": true, "origin": {"entry": "node", "entryPid": 1420, "login": null, "noLogin": true, "user": "status", "lineage": ["node"]}, "payload": "df -k"}
+{"t": 1.8, "exec": true, "origin": {"entry": "node", "entryPid": 1420, "login": null, "noLogin": true, "user": "status", "lineage": ["node"]}, "payload": "ps aux"}
+{"t": 2.1, "exec": true, "origin": {"entry": "node", "entryPid": 1420, "login": null, "noLogin": true, "user": "status", "lineage": ["node"]}, "payload": "ss -tlnp"}
+{"t": 60, "exec": true, "origin": {"entry": "node", "entryPid": 1420, "login": null, "noLogin": true, "user": "status", "lineage": ["node"]}, "payload": "uptime"}
+{"t": 60.3, "exec": true, "origin": {"entry": "node", "entryPid": 1420, "login": null, "noLogin": true, "user": "status", "lineage": ["node"]}, "payload": "free -m"}
+{"t": 60.6, "exec": true, "origin": {"entry": "node", "entryPid": 1420, "login": null, "noLogin": true, "user": "status", "lineage": ["node"]}, "payload": "df -k"}

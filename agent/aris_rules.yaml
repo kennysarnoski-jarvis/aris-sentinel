@@ -12,9 +12,14 @@
 # %proc.cwd is REQUIRED: the agent resolves a relative script path (`python3 job.py`)
 # against the process's own cwd, never its own. Existing installs must re-run
 # install.sh (it re-copies this file) to pick that up.
+#
+# %proc.aname[2..4] and %user.loginuid feed the --behavior service rule: the names of the
+# processes above the exec (a web server's child is told apart from a login's) and whether
+# anybody logged in to start it. An install with the older rule still works; it sees a
+# service that systemd starts and not one inside a container, until install.sh is re-run.
 - rule: aris_exec_capture
   desc: Emit every process exec for Aris Sentinel scoring
   condition: (evt.type in (execve, execveat) and evt.dir=<)
-  output: "aris_exec pid=%proc.pid ppid=%proc.ppid sid=%proc.sid user=%user.name exe=%proc.exe pname=%proc.pname cwd=%proc.cwd cmdline=%proc.cmdline"
+  output: "aris_exec pid=%proc.pid ppid=%proc.ppid sid=%proc.sid user=%user.name auid=%user.loginuid exe=%proc.exe pname=%proc.pname gpname=%proc.aname[2] ggpname=%proc.aname[3] gggpname=%proc.aname[4] cwd=%proc.cwd cmdline=%proc.cmdline"
   priority: INFORMATIONAL
   tags: [aris]

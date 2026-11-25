@@ -30,6 +30,7 @@ export const deps: {
   procParent: (pid: number) => number | null;
   /** the account that logged in (the kernel's loginuid: it survives sudo), or null when there was no login */
   loginUid: (pid: number) => number | null;
+  noLogin: (pid: number) => boolean | null;
   /** the SSH client's address from the process's SSH_CONNECTION, or null */
   sshClient: (pid: number) => string | null;
   /** uid -> account name, read from /etc/passwd as a file */
@@ -43,6 +44,10 @@ export function parseStatSid(stat: string): number | null;
 export function sessionKeyOf(f: FalcoFields): string | null;
 /** where the event's session came from (facts for the core's origin rule), found once per session; null when no chain reaches init */
 export function originOf(f: FalcoFields): BehaviorOriginFacts | null;
+/** names of the processes above an exec, nearest first, from the event's own fields */
+export function lineageOf(f: Record<string, unknown>): string[];
+/** originOf plus the event's lineage and login fact: what the core's origin and service rules read */
+export function behaviorFacts(f: FalcoFields): BehaviorOriginFacts | null;
 export function hasInlineCode(exe: string, args: string[]): boolean;
 export function interpreterOf(exe: string): "python" | "shell" | "node" | "perl" | "ruby" | "php" | null;
 /** the first positional argument (the script), or null for a module run, stdin, or no positional */

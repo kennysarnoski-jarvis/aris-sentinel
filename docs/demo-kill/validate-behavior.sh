@@ -29,6 +29,21 @@
 #   7. COMBO       a sweep, then a narrated step. The sweep is an alert and the session
 #                  carries on; the narrated step is a conviction and the session dies.
 #   8. SLOW        the sweep of 1, one command every six seconds: slower than the window.
+#   9. SERVICE     three of those questions (who am I, what is this box, what may I run as
+#                  root) asked by the children of a process named like a web application
+#                  server. Three areas, one sensitive: not a sweep, and reported once as a
+#                  service's commands. Nothing is killed.
+#  10. LOGIN TWIN  the same three questions from an ordinary shell. Nothing is recorded.
+#  11. RUNTIME     the same three from python3: started by systemd (nobody logged in) it is
+#                  reported; started from this login shell it is not. This is the check
+#                  that the capture rule's ancestor names and audit login id arrive.
+#  12. ORIGIN      the two halves of 6, started as children of this SSH login instead of
+#                  detached from it: two sessions, one origin, ONE report.
+# Scenarios 9 to 12 were added on 2026-11-24. Run live that day: 41/41 on three consecutive
+# runs of the final code (kernel 6.8.0-147, Falco 0.45.2, Node 18.19, 2 CPU / 4 GB). The
+# first run that day was 30 of 38, and the code as it stood before was 23 of 29: see the
+# note on as_nobody below. It also found that a login's earlier report covered a server's
+# commands, which the core no longer lets it do.
 # Every command is an ordinary read-only one (the sudo call asks for nothing and is
 # refused); the "attacker" in 7 is agent/attacker_impact.py (prints, sleeps, writes a
 # marker). Exit code 0 = every check passed.
@@ -47,6 +62,7 @@ sid = int(sys.argv[2]); what = sys.argv[3]
 mine = [r for r in rows if r.get("sid") == sid]
 beh = lambda r: (r.get("behavior") or {})
 sweeps = [r for r in mine if r["decision"] == "alert" and beh(r).get("kind") == "sweep"]
+services = [r for r in mine if r["decision"] == "alert" and beh(r).get("kind") == "service"]
 if what == "sweeps":       print(len(sweeps))
 elif what == "cmd":        print(sweeps[0]["cmdline"] if sweeps else "")
 elif what == "sensitive":  print(",".join(beh(sweeps[0]).get("sensitive") or []) if sweeps else "")
@@ -57,11 +73,24 @@ elif what == "blocks":     print(sum(1 for r in mine if r["decision"] == "block"
 elif what == "any_kill":   print(sum(len(r.get("killed") or []) for r in mine))
 elif what == "quarantine": print(sum(1 for r in mine if r.get("quarantine")))
 elif what == "decisions":  print(",".join(sorted({r["decision"] + ":" + r["action"] for r in mine})))
+elif what == "origins":    print(sum(1 for r in sweeps if beh(r).get("scope") == "origin" and (beh(r).get("sessions") or 0) >= 2))
+elif what == "services":   print(len(services))
+elif what == "svc_cmd":    print(services[0]["cmdline"] if services else "")
+elif what == "svc_name":   print(beh(services[0]).get("service", "") if services else "")
+elif what == "svc_areas":  print(",".join(beh(services[0]).get("categories") or []) if services else "")
 PY
 }
 # Run a driver script as an unprivileged user in its OWN session; each driver writes the
 # session id the kernel gave it to out/<name>.sid, so the checks never guess a sid.
-as_nobody() { setsid setpriv --reuid 65534 --regid 65534 --clear-groups bash "$@" > /dev/null 2>&1 < /dev/null & }
+# The driver is started from a subshell that exits at once, so it is a child of init and not
+# of the SSH login this script runs in. Otherwise every scenario is one ORIGIN (the SSH logins
+# of one account from one address are counted together since 2026-11-21), the first report
+# covers the rest, and scenarios 2, 5 and 7 fail: that is what this script did, unnoticed,
+# from 2026-11-21 until it was next run on 2026-11-24 (23 of 29 on the code as it stood).
+# Scenario 12 starts its two sessions the other way, on purpose.
+detached() { ( setsid setpriv --reuid 65534 --regid 65534 --clear-groups "$@" > /dev/null 2>&1 < /dev/null & ) }
+as_nobody() { detached bash "$@"; }
+from_this_login() { setsid setpriv --reuid 65534 --regid 65534 --clear-groups bash "$@" > /dev/null 2>&1 < /dev/null & }
 sid_of() { tr -d ' \n' < "$W/out/$1.sid" 2>/dev/null || echo 0; }
 stop_agent() { pkill -f "sentinel-agent.mjs" 2>/dev/null; pkill -x falco 2>/dev/null; sleep 1; }
 # A driver: record the sid, then the given lines.
@@ -158,6 +187,56 @@ check "the session carried on after it"                           '[ -e "$W/out/
 check "the narrated step was convicted and killed"                '[ "$(inc $SID7 blocks)" -ge 1 ] && grep -q "SESSION KILL sid=$SID7" "$W/agent.log"'
 check "no process is left in session $SID7 (was: shell + sleep 300 + python)" '[ "$(members $SID7)" = "0" ]'
 check "the session's next command after the conviction never ran" '[ ! -e "$W/out/COMBO_NEXT" ]'
+
+echo; echo "== 9. SERVICE: three questions from the children of a process named like an application server"
+# A copy of bash under a server's name: its children's parent is then called php-fpm8.3,
+# which is all the agent has to go on. Nothing is served and nothing is exploited.
+cp /bin/bash "$W/php-fpm8.3"; chmod 755 "$W/php-fpm8.3"
+driver service "$Q1" 'sleep 2' "$Q2" 'sleep 2' "$Q6" "touch $W/out/SERVICE_NEXT" 'sleep 1' 'ls -la /home > /dev/null' "touch $W/out/SERVICE_FINISHED"
+detached "$W/php-fpm8.3" "$W/service.sh"
+sleep 9
+SID9=$(sid_of service)
+check "the server's children ran in a session of their own"        '[ "$SID9" -gt 1 ]'
+check "they were reported once, as a service's commands, not as a sweep" '[ "$(inc $SID9 services)" = "1" ] && [ "$(inc $SID9 sweeps)" = "0" ] && grep -q "commands looked around the host — no kill" "$W/agent.log"'
+check "on the third question, naming the server and three areas"  '[ "$(inc $SID9 svc_cmd)" = "sudo -n -l" ] && [ "$(inc $SID9 svc_name)" = "php-fpm" ] && [ "$(inc $SID9 svc_areas)" = "host,identity,privilege" ]'
+check "fully armed, nothing was killed and the session finished"  '[ "$(inc $SID9 any_kill)" = "0" ] && [ "$(inc $SID9 quarantine)" = "0" ] && [ -e "$W/out/SERVICE_NEXT" ] && [ -e "$W/out/SERVICE_FINISHED" ]'
+
+echo; echo "== 10. LOGIN TWIN: the same three questions from an ordinary shell"
+driver twin "$Q1" 'sleep 2' "$Q2" 'sleep 2' "$Q6" "touch $W/out/TWIN_FINISHED"
+as_nobody "$W/twin.sh"
+sleep 8
+SID10=$(sid_of twin)
+check "the twin ran to its end and nothing was recorded against it" '[ -e "$W/out/TWIN_FINISHED" ] && [ "$SID10" -gt 1 ] && [ -z "$(inc $SID10 decisions)" ]'
+
+echo; echo "== 11. RUNTIME: the same three from python3, started by systemd and started from this login"
+cat > "$W/rt.py" <<PYEOF
+import os, subprocess, sys, time
+name = sys.argv[1]
+open("$W/out/%s.sid" % name, "w").write(str(os.getsid(0)))
+for c in ["id", "uname -a", "sudo -n -l"]:
+    subprocess.run(c, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    time.sleep(2)
+open("$W/out/%s_FINISHED" % name.upper(), "w").close()
+PYEOF
+chmod 644 "$W/rt.py"
+check "this shell has a login id and a systemd to start a unit with (the two halves below need them)" '[ "$(cat /proc/self/loginuid)" != "4294967295" ] && command -v systemd-run > /dev/null'
+systemd-run --quiet --collect --uid=65534 --gid=65534 python3 "$W/rt.py" rtunit > /dev/null 2>&1
+detached python3 "$W/rt.py" rtlogin
+sleep 9
+SID11A=$(sid_of rtunit); SID11B=$(sid_of rtlogin)
+check "both ran to their end, in two sessions"                    '[ -e "$W/out/RTUNIT_FINISHED" ] && [ -e "$W/out/RTLOGIN_FINISHED" ] && [ "$SID11A" -gt 1 ] && [ "$SID11B" -gt 1 ] && [ "$SID11A" != "$SID11B" ]'
+check "started by systemd, with nobody logged in, the runtime's commands are reported" '[ "$(inc $SID11A services)" = "1" ] && [ "$(inc $SID11A svc_name)" = "python" ] && [ "$(inc $SID11A any_kill)" = "0" ]'
+check "started from a login, the same runtime's commands are not" '[ -z "$(inc $SID11B decisions)" ]'
+
+echo; echo "== 12. ORIGIN: the two halves of 6 again, this time as children of this SSH login"
+driver origa "$Q1" "$Q2" "$Q5" "touch $W/out/ORIGA_FINISHED"
+driver origb 'sleep 2' "$Q3" "$Q4" "$Q6" "touch $W/out/ORIGB_FINISHED"
+from_this_login "$W/origa.sh"; from_this_login "$W/origb.sh"
+sleep 6
+SID12A=$(sid_of origa); SID12B=$(sid_of origb)
+check "both halves ran, in two different sessions"                '[ -e "$W/out/ORIGA_FINISHED" ] && [ -e "$W/out/ORIGB_FINISHED" ] && [ "$SID12A" -gt 1 ] && [ "$SID12B" -gt 1 ] && [ "$SID12A" != "$SID12B" ]'
+check "together they are ONE report, for the login they both came from" '[ "$(( $(inc $SID12A origins) + $(inc $SID12B origins) ))" = "1" ] && [ "$(( $(inc $SID12A sweeps) + $(inc $SID12B sweeps) ))" = "1" ] && grep -q "sessions from one origin swept the host together — no kill" "$W/agent.log"'
+check "and nothing was killed"                                    '[ "$(inc $SID12A any_kill)" = "0" ] && [ "$(inc $SID12B any_kill)" = "0" ]'
 
 echo; echo "== 8. SLOW: checked now, 30 s of six-second gaps against a 20 s window"
 for _ in $(seq 1 20); do [ -e "$W/out/SLOW_FINISHED" ] && break; sleep 1; done

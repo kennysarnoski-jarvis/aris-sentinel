@@ -25,7 +25,7 @@ const rows = runs.map((t) => {
     t.commands.forEach((c, k) => { if (ms(c.at) <= ms(first.ts) + 500) n = k + 1; });
     return n || 1;
   };
-  const narration = mine.filter((i) => !(i.signals || []).some((s) => s.startsWith("tripwire_") || s === "behavior_sweep"));
+  const narration = mine.filter((i) => !(i.signals || []).some((s) => s.startsWith("tripwire_") || s.startsWith("behavior_")));
   const sweep = mine.find((i) => (i.signals || []).includes("behavior_sweep"));
   return {
     t, mine, completed: !/^NO |^SHELL LOST/.test(t.end),

@@ -1,0 +1,5 @@
+{"t": 0, "exec": true, "origin": {"entry": "sshd", "entryPid": 812, "login": "dev", "noLogin": false, "user": "dev", "client": "203.0.113.21", "lineage": ["node", "bash", "sshd-session", "sshd"]}, "payload": "whoami"}
+{"t": 0.2, "exec": true, "origin": {"entry": "sshd", "entryPid": 812, "login": "dev", "noLogin": false, "user": "dev", "client": "203.0.113.21", "lineage": ["node", "bash", "sshd-session", "sshd"]}, "payload": "uname -a"}
+{"t": 0.5, "exec": true, "origin": {"entry": "sshd", "entryPid": 812, "login": "dev", "noLogin": false, "user": "dev", "client": "203.0.113.21", "lineage": ["node", "bash", "sshd-session", "sshd"]}, "payload": "git config --get user.email"}
+{"t": 1.1, "exec": true, "origin": {"entry": "sshd", "entryPid": 812, "login": "dev", "noLogin": false, "user": "dev", "client": "203.0.113.21", "lineage": ["node", "bash", "sshd-session", "sshd"]}, "payload": "ls -la /home/dev/.ssh"}
+{"t": 1.6, "exec": true, "origin": {"entry": "sshd", "entryPid": 812, "login": "dev", "noLogin": false, "user": "dev", "client": "203.0.113.21", "lineage": ["node", "bash", "sshd-session", "sshd"]}, "payload": "git ls-remote origin"}

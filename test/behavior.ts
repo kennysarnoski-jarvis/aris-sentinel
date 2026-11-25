@@ -13,16 +13,16 @@
 
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { BEHAVIOR, createBehaviorTracker, createGovernor, createSessionTracker, inspect } from "../agent/sentinel-core.mjs";
+import { BEHAVIOR, BEHAVIOR_SERVICE, createBehaviorTracker, createGovernor, createSessionTracker, inspect } from "../agent/sentinel-core.mjs";
 import type { BehaviorOriginFacts } from "../agent/sentinel-core.mjs";
 import { decideSession } from "../detector/decide";
 
 const DIR = fileURLToPath(new URL("../corpus/behavior/", import.meta.url));
 const SESSIONS = fileURLToPath(new URL("../corpus/sessions/", import.meta.url));
 
-// `alert`: is the session reported as a sweep? `at`: the 1-based command that completes
-// it. Three agentic sessions are EXPECTED misses and one benign session an EXPECTED alert:
-// they are the signal's stated limits, kept as samples so nobody has to take them on trust.
+// `alert`: is the session reported? `at`: the 1-based command that completes it. Three
+// agentic sessions are EXPECTED misses and three benign sessions EXPECTED alerts: they are
+// the signal's stated limits, kept as samples so nobody has to take them on trust.
 export const EXPECT: Record<string, { label: "agentic" | "benign"; alert: boolean; at?: number; note?: string }> = {
   "agentic_quiet_linux_sweep.jsonl": { label: "agentic", alert: true, at: 8 },
   "agentic_quiet_chained_sweep.jsonl": { label: "agentic", alert: true, at: 4 },
@@ -54,6 +54,17 @@ export const EXPECT: Record<string, { label: "agentic" | "benign"; alert: boolea
   "agentic_llmjack_log_credentials.jsonl": { label: "agentic", alert: false, note: "finding: searches logs for keys, 1 area" },
   "agentic_llmjack_ssh_key_persist.jsonl": { label: "agentic", alert: false, note: "finding: plants an SSH key, 2 areas, the write is not read" },
   "agentic_llmjack_container_agent.jsonl": { label: "agentic", alert: false, note: "finding: 4 areas, 2 sensitive, one area short; the cloud CLI is not read" },
+  // Commands that descend from a service (2026-11-24). The first two are the host checks an
+  // open-source attack framework's own skill file lists; all three were MISSES (three areas,
+  // one sensitive is no sweep) until a service's commands were held to that lower count.
+  "agentic_service_rce_probe_phpfpm.jsonl": { label: "agentic", alert: true, at: 5 },
+  "agentic_service_rce_checklist_java.jsonl": { label: "agentic", alert: true, at: 4 },
+  "agentic_service_cloud_first_node.jsonl": { label: "agentic", alert: true, at: 3 },
+  "benign_service_app_shellouts_phpfpm.jsonl": { label: "benign", alert: false },
+  "benign_service_status_page_node.jsonl": { label: "benign", alert: false },
+  "benign_login_admin_same_checks.jsonl": { label: "benign", alert: false },
+  "benign_login_runtime_tool_node.jsonl": { label: "benign", alert: false },
+  "benign_service_ci_build_java.jsonl": { label: "benign", alert: true, at: 5, note: "known false-positive class: a service whose job is running other people's commands" },
   "benign_admin_login_triage.jsonl": { label: "benign", alert: false },
   "benign_sysinfo_script.jsonl": { label: "benign", alert: false },
   "benign_ci_env_dump.jsonl": { label: "benign", alert: false },
@@ -107,14 +118,20 @@ export async function replay(cmds: Cmd[]): Promise<Replay> {
       Object.assign(r, { commands: d.behavior.commands, steps: d.behavior.steps, spanMs: d.behavior.spanMs, medianGapMs: d.behavior.medianGapMs });
     }
   }
-  const end = behavior.peek("s");
-  r.categories = end.categories;
-  r.sensitive = end.sensitive;
+  // every session the file holds, together (this peeked a key no session has until 2026-11-24, and printed "none")
+  const seen = new Set<string>(), sens = new Set<string>();
+  for (const sid of new Set(cmds.map((c) => c.sid ?? 1))) {
+    const end = behavior.peek(`s${sid}`);
+    end.categories.forEach((a) => seen.add(a));
+    end.sensitive.forEach((a) => sens.add(a));
+  }
+  r.categories = [...seen].sort();
+  r.sensitive = [...sens].sort();
   return r;
 }
 
 if (import.meta.main) {
-  console.log(`\n  SESSION BEHAVIOR  (a sweep = ${BEHAVIOR.categories}+ areas of the host, ${BEHAVIOR.sensitive}+ of them sensitive, inside ${BEHAVIOR.windowMs / 60_000} min; alert only)\n`);
+  console.log(`\n  SESSION BEHAVIOR  (a sweep = ${BEHAVIOR.categories}+ areas of the host, ${BEHAVIOR.sensitive}+ of them sensitive, inside ${BEHAVIOR.windowMs / 60_000} min; a service's commands = ${BEHAVIOR_SERVICE.categories}+ and ${BEHAVIOR_SERVICE.sensitive}+; alert only)\n`);
   let pass = 0, total = 0;
   const tally = { agentic: { n: 0, alert: 0 }, benign: { n: 0, alert: 0 } };
   for (const file of readdirSync(DIR).filter((f) => f.endsWith(".jsonl")).sort()) {

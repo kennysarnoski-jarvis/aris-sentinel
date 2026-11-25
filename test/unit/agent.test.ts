@@ -742,6 +742,7 @@ describe("session behavior through the agent (--behavior)", () => {
     agent.deps.procParent = (pid: number) => (pid === 812 ? 1 : 812);
     agent.deps.procName = (pid: number) => (pid === 812 ? "sshd" : "bash");
     agent.deps.loginUid = () => 1001;
+    agent.deps.noLogin = () => false;
     agent.deps.userName = () => login;
     agent.deps.sshClient = () => client;
   };
@@ -753,7 +754,7 @@ describe("session behavior through the agent (--behavior)", () => {
     const chain = agent.deps.ancestorsOf;
     agent.deps.ancestorsOf = (pid: number) => { walks++; return chain(pid); };
     const f = run("id", 996001).f;
-    expect(agent.originOf(f)).toEqual({ entry: "sshd", entryPid: 812, login: "ops", user: "www-data", client: "203.0.113.7" });
+    expect(agent.originOf(f)).toEqual({ entry: "sshd", entryPid: 812, login: "ops", noLogin: false, user: "www-data", client: "203.0.113.7" });
     expect(agent.originOf(run("uname -a", 996001).f)).toEqual(agent.originOf(f)); // kept for the session
     expect(walks).toBe(1);
     expect(agent.originOf({ ...f, "proc.sid": 1 })).toBeNull();
@@ -794,6 +795,90 @@ describe("session behavior through the agent (--behavior)", () => {
     expect(pidKills).toEqual([]);
     expect(asked).toEqual([]);
     expect(await agent.handleEvent(run("ls -la /srv", 996299).f)).toMatchObject({ decision: "allow" });
+  });
+
+  // Read in three attack frameworks' source (2026-11-24): what reaches a host is a bare command,
+  // most often a child of the program that serves a web application. The agent says what a
+  // command descends from; the rule that holds a service's commands to a lower count is the core's.
+  const PROBE = ["id", "uname -a", "sudo -n -l"];
+  const under = (names: string[], auid: number | string | undefined) => ({ "proc.pname": names[0], "proc.aname[2]": names[1], "proc.aname[3]": names[2], "proc.aname[4]": names[3], ...(auid === undefined ? {} : { "user.loginuid": auid }) });
+
+  test("what a command descends from is read from the event: the parent and three more, nearest first", () => {
+    expect(agent.lineageOf(under(["sh", "php-fpm8.3", "php-fpm8.3", "systemd"], -1))).toEqual(["sh", "php-fpm8.3", "php-fpm8.3", "systemd"]);
+    expect(agent.lineageOf({ "proc.pname": "sh", "proc.aname[2]": "<NA>", "proc.aname[3]": "", "proc.aname[4]": null, "proc.aname[5]": "nginx" })).toEqual(["sh"]);
+    expect(agent.lineageOf({ "proc.pname": 7 })).toEqual([]);
+    expect(agent.lineageOf({})).toEqual([]);
+  });
+
+  test("whether anybody logged in: the event's own audit id first, then what the session's origin read", () => {
+    arm({ enforce: false, killSession: false });
+    const f = (auid: number | string | undefined, sid: number) => ({ ...run("id", sid).f, ...under(["sh", "java"], auid) });
+    expect(agent.behaviorFacts(f(-1, 996301))).toEqual({ lineage: ["sh", "java"], noLogin: true });
+    expect(agent.behaviorFacts(f(4294967295, 996302))?.noLogin).toBe(true); // the kernel's own unset value
+    expect(agent.behaviorFacts(f("-1", 996303))?.noLogin).toBe(true);
+    expect(agent.behaviorFacts(f(1000, 996304))?.noLogin).toBe(false);
+    expect(agent.behaviorFacts(f(0, 996305))?.noLogin).toBe(false); // root logged in
+    for (const [i, unknown] of [undefined, "<NA>", "", "abc", 1.5].entries()) expect(agent.behaviorFacts(f(unknown as never, 996310 + i))?.noLogin).toBeNull();
+    expect(agent.behaviorFacts(run("id", 996320).f)).toBeNull(); // no lineage and no origin: nothing to say
+    // an event without the audit id (an older capture rule): the origin's own reading is used
+    sshOrigin("203.0.113.7");
+    agent.deps.noLogin = () => true;
+    expect(agent.behaviorFacts(f(undefined, 996321))).toMatchObject({ entry: "sshd", lineage: ["sh", "java"], noLogin: true });
+    expect(agent.behaviorFacts(f(1000, 996322))).toMatchObject({ noLogin: false }); // the event's own reading wins
+  });
+
+  test("a web server's child that asks who it is, what the box is and what it may run as root is ONE alert, and kills nothing fully armed", async () => {
+    arm({ enforce: true, killSession: true });
+    const sid = 996400;
+    const results = [];
+    for (const c of PROBE) results.push(await agent.handleEvent({ ...run(c, sid).f, ...under(["sh", "php-fpm8.3", "php-fpm8.3"], -1) }));
+    expect(results.slice(0, 2).map((d) => d?.decision)).toEqual(["allow", "allow"]);
+    const incs = mine(sid);
+    expect(incs.length).toBe(1);
+    expect(incs[0]).toMatchObject({ decision: "alert", action: "alerted", tier: 1, cmdline: "sudo -n -l", signals: ["behavior_service"], killed: [], session_kill: null });
+    expect(incs[0].behavior).toMatchObject({ kind: "service", service: "php-fpm", scope: "session", sensitive: ["privilege"] });
+    expect(treeKills).toEqual([]);
+    expect(pidKills).toEqual([]);
+    expect(asked).toEqual([]);
+    expect(await agent.handleEvent({ ...run("ls -la /srv", sid).f, ...under(["sh", "php-fpm8.3"], -1) })).toMatchObject({ decision: "allow" });
+  });
+
+  test("the same three commands under a login shell, or under a runtime somebody logged in to start, are quiet", async () => {
+    arm({ enforce: false, killSession: false });
+    for (const c of PROBE) await agent.handleEvent({ ...run(c, 996410).f, ...under(["bash", "sshd-session", "sshd"], 1000) });
+    for (const c of PROBE) await agent.handleEvent({ ...run(c, 996411).f, ...under(["sh", "node", "bash", "sshd-session"], 1000) });
+    for (const c of PROBE) await agent.handleEvent({ ...run(c, 996412).f, ...under(["sh", "node"], undefined) }); // not known is not "nobody"
+    expect([...mine(996410), ...mine(996411), ...mine(996412)]).toEqual([]);
+    for (const c of PROBE) await agent.handleEvent({ ...run(c, 996413).f, ...under(["sh", "node"], -1) });
+    expect(mine(996413).map((i) => i.signals)).toEqual([["behavior_service"]]);
+  });
+
+  test("lineage is read per command and never kept: a server's children and its owner's commands share a session", async () => {
+    arm({ enforce: false, killSession: false });
+    const sid = 996420;
+    // the owner's first command happens to be the server itself, started from the terminal
+    await agent.handleEvent({ ...run("nginx -g daemon off;", sid).f, ...under(["bash", "sshd-session", "sshd"], 1000) });
+    for (const c of PROBE) await agent.handleEvent({ ...run(c, sid).f, ...under(["bash", "sshd-session", "sshd"], 1000) });
+    expect(mine(sid)).toEqual([]);
+    expect(agent.deps.behavior!.peek(`service:sid:${sid}`).commands).toBe(0);
+    // the server's own child is counted for the server, alone
+    await agent.handleEvent({ ...run("df -k", sid).f, ...under(["sh", "nginx", "bash", "sshd-session"], 1000) });
+    expect(agent.deps.behavior!.peek(`service:sid:${sid}`).categories).toEqual(["storage"]);
+    expect(mine(sid)).toEqual([]);
+  });
+
+  test("with an older capture rule (no ancestor names, no audit id) a service that init started is still found", async () => {
+    arm({ enforce: false, killSession: false });
+    agent.deps.ancestorsOf = (pid: number) => [pid, 911]; // the command, then php-fpm just below init
+    agent.deps.procParent = (pid: number) => (pid === 911 ? 1 : 911);
+    agent.deps.procName = (pid: number) => (pid === 911 ? "php-fpm8.3" : "sh");
+    agent.deps.loginUid = () => null;
+    agent.deps.noLogin = () => true;
+    agent.deps.sshClient = () => null;
+    const sid = 996430;
+    for (const c of PROBE) await agent.handleEvent(run(c, sid).f);
+    expect(mine(sid).map((i) => i.signals)).toEqual([["behavior_service"]]);
+    expect(mine(sid)[0].behavior).toMatchObject({ kind: "service", service: "php-fpm" });
   });
 
   test("the same survey from two client addresses is two origins, and quiet", async () => {

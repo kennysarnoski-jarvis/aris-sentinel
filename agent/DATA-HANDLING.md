@@ -25,7 +25,10 @@ data leaving the host.**
   in memory: the names of the areas of the host its commands asked about and when. No
   command text is kept, nothing is written to disk, and it never calls a judge. A sweep
   alert carries those area names, a command count and timings, plus the one command line
-  that completed it (like every other incident).
+  that completed it (like every other incident). To tell a server's child from a login's,
+  the agent also reads, per command, the names of up to four processes above it and whether
+  the kernel has an audit login id for it. Those are read and dropped; a report that rests
+  on them carries one program name from a fixed list (for example `php-fpm`).
 
 ## What leaves the box, and exactly when
 

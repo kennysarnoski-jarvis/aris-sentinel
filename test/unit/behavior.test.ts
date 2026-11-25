@@ -4,7 +4,7 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { BEHAVIOR, BEHAVIOR_CATEGORIES, behaviorCategories, behaviorOrigin, createBehaviorTracker, createGovernor, createSessionTracker, createTripwire, decide, decideSession, newTripwireToken, observeBehavior, tripwireDecoy } from "../../agent/sentinel-core.mjs";
+import { BEHAVIOR, BEHAVIOR_CATEGORIES, BEHAVIOR_SERVICE, behaviorCategories, behaviorOrigin, behaviorService, behaviorServices, createBehaviorTracker, createGovernor, createSessionTracker, createTripwire, decide, decideSession, newTripwireToken, observeBehavior, tripwireDecoy } from "../../agent/sentinel-core.mjs";
 import type { Adjudication, BehaviorCategory } from "../../agent/sentinel-core.mjs";
 import { EXPECT, loadBehavior, replay } from "../behavior";
 
@@ -520,6 +520,200 @@ describe("sessions from one origin are counted together", () => {
     expect(d.viaBehavior).toBeUndefined();
     expect(d.behavior).toMatchObject({ scope: "origin", sessions: 6 });
     expect(d.reason).toContain("6 sessions from one origin (SSH logins of ops from 203.0.113.7) together had also swept");
+  });
+});
+
+// Read in the source of three open-source attack frameworks (2026-11-24): the model stays on
+// the operator's side and what reaches a host is a bare command, most often through a web
+// application. Those commands descend from the program that serves it.
+describe("commands that descend from a service are held to a lower count", () => {
+  const PROBE = ["id", "uname -a", "sudo -n -l"]; // identity, host, privilege: three areas, one sensitive
+  const PHP = { entry: "php-fpm8.3", login: null, noLogin: true, user: "www-data", lineage: ["sh", "php-fpm8.3", "php-fpm8.3"] };
+  const TOMCAT = { entry: "java", login: null, noLogin: true, user: "tomcat", lineage: ["sh", "java"] };
+  const ADMIN = { entry: "sshd", login: "alice", noLogin: false, user: "alice", client: "203.0.113.7", lineage: ["bash", "sshd-session", "sshd"] };
+  const fresh = (services = behaviorServices({})) => ({ behavior: createBehaviorTracker({ services }), sessions: createSessionTracker(), governor: createGovernor({ budgetPerMin: 0 }), env: {} });
+  const through = async (opts: object, key: string, origin: object | null, cmds = PROBE) => {
+    const ds = [];
+    for (const c of cmds) ds.push(await decideSession(key, c, { ...opts, origin }));
+    return ds;
+  };
+
+  test("the published count is three areas, one of them sensitive, and it is lower than a sweep's", () => {
+    expect(BEHAVIOR_SERVICE).toEqual({ categories: 3, sensitive: 1 });
+    expect(BEHAVIOR_SERVICE.categories).toBeLessThan(BEHAVIOR.categories);
+    expect(BEHAVIOR_SERVICE.sensitive).toBeLessThan(BEHAVIOR.sensitive);
+    expect(Object.isFrozen(BEHAVIOR_SERVICE)).toBe(true);
+  });
+
+  test("a server is counted whoever started it; a runtime only when nobody logged in", () => {
+    for (const noLogin of [true, false, null, undefined]) expect(behaviorService({ lineage: ["sh", "nginx"], noLogin })).toMatchObject({ name: "nginx", tier: "server" });
+    expect(behaviorService({ lineage: ["sh", "java"], noLogin: true })).toEqual({ name: "java", tier: "runtime", what: "java (started without anybody logging in)" });
+    for (const noLogin of [false, null, undefined, "true", 1]) expect(behaviorService({ lineage: ["sh", "java"], noLogin } as never)).toBeNull();
+  });
+
+  test("names are read as the kernel reports them: a version, a title, the nearest one first, the entry last", () => {
+    expect(behaviorService({ lineage: ["sh", "php-fpm8.3"] })?.name).toBe("php-fpm");
+    expect(behaviorService({ lineage: ["apache2"] })?.name).toBe("apache");
+    expect(behaviorService({ lineage: ["python3.12"], noLogin: true })?.name).toBe("python");
+    expect(behaviorService({ lineage: ["sh", "next-server (v1"] })?.name).toBe("next-server");
+    expect(behaviorService({ lineage: ["sh", "node", "nginx"], noLogin: true })?.name).toBe("node"); // the nearest listed name
+    expect(behaviorService({ lineage: ["sh", "node", "nginx"], noLogin: false })?.name).toBe("nginx"); // a runtime under a login is passed over
+    expect(behaviorService({ lineage: ["sh"], entry: "php-fpm8.3" })?.name).toBe("php-fpm");
+    expect(behaviorService({ entry: "httpd" })?.name).toBe("httpd");
+  });
+
+  test("nothing else is a service: a login, a container runtime, a scheduler, a name that only starts like one", () => {
+    for (const name of ["sshd", "sshd-session", "bash", "containerd-shim", "cron", "systemd", "tmux: server", "javac", "nodemon", "nginx-debug", "pythonista", ""]) {
+      expect(behaviorService({ lineage: [name], entry: name, noLogin: true })).toBeNull();
+    }
+    for (const facts of [null, undefined, {}, "nginx", 7, { lineage: "nginx" }, { lineage: [null, undefined, 7, {}] }]) expect(behaviorService(facts as never)).toBeNull();
+  });
+
+  test("only the first sixteen names are read, and a name cannot carry anything but a name", () => {
+    expect(behaviorService({ lineage: [...Array(16).fill("sh"), "nginx"] })).toBeNull();
+    expect(behaviorService({ lineage: [...Array(15).fill("sh"), "nginx"] })?.name).toBe("nginx");
+    for (const bad of ["nginx\n[2026] FAKE LINE", "nginx;rm", "ng inx", "n".repeat(500), "../nginx", "nginx$(id)"]) {
+      const hit = behaviorService({ lineage: [bad] });
+      if (hit) expect(hit.what).toBe("nginx (a program that serves requests)"); // the first word alone, when it is a listed name
+      else expect(hit).toBeNull();
+    }
+    expect(behaviorService({ lineage: ["nginx;rm"] })).toBeNull();
+  });
+
+  test("a host adds a name, removes one, or turns the rule off; the published lists are not touched", () => {
+    const own = behaviorServices({ ARIS_BEHAVIOR_SERVICES: "billing-api, -java ,Node,;bad;,-" });
+    expect(behaviorService({ lineage: ["billing-api"] }, own)).toMatchObject({ name: "billing-api", tier: "server" });
+    expect(behaviorService({ lineage: ["java"], noLogin: true }, own)).toBeNull();
+    expect(behaviorService({ lineage: ["node"], noLogin: false }, own)).toMatchObject({ tier: "server" }); // named by the host: counted whoever started it
+    expect(behaviorService({ lineage: ["nginx"] }, own)?.name).toBe("nginx");
+    for (const off of ["off", "none", "0", "nginx,OFF"]) expect(behaviorService({ lineage: ["nginx"] }, behaviorServices({ ARIS_BEHAVIOR_SERVICES: off }))).toBeNull();
+    // a name a host gives is held to the same shape as one the kernel reports
+    const odd = behaviorServices({ ARIS_BEHAVIOR_SERVICES: "a;b,$(id),../x," + "n".repeat(40) });
+    expect([...odd.servers].filter((n) => /[^a-z0-9._+-]/.test(n) || n.length > 32)).toEqual([]);
+    expect(odd.servers.size).toBe(behaviorServices({}).servers.size);
+    const published = behaviorServices({});
+    expect(behaviorService({ lineage: ["java"], noLogin: true }, published)?.name).toBe("java");
+    expect(behaviorService({ lineage: ["billing-api"] }, published)).toBeNull();
+    expect(Object.isFrozen(published)).toBe(true);
+  });
+
+  test("through decideSession: allow, allow, then one alert that says which service, with no judge called", async () => {
+    let calls = 0;
+    const opts = { ...fresh(), adjudicator: async (): Promise<Adjudication> => { calls++; return { agentic: true, confidence: 0.99, reasoning: "[stub]" }; } };
+    const ds = await through(opts, "sid:8000", PHP);
+    expect(ds.map((d) => d.decision)).toEqual(["allow", "allow", "alert"]);
+    expect(ds[2]).toMatchObject({ viaBehavior: true, tier: 1, verdict: "clear", score: 0 });
+    expect(ds[2].signals).toEqual(["behavior_service"]);
+    expect(ds[2].behavior).toMatchObject({ kind: "service", service: "php-fpm", scope: "session", categories: ["host", "identity", "privilege"], sensitive: ["privilege"] });
+    expect(ds[2].reason).toContain("a session whose commands descend from php-fpm (a program that serves requests) asked about 3 areas");
+    expect(ds[2].reason).toContain("never a kill");
+    expect(calls).toBe(0);
+    expect((await decideSession("sid:8000", "ls -la /srv", { ...opts, origin: PHP })).decision).toBe("allow"); // and the session goes on
+  });
+
+  test("the same three commands from a login are not reported, and neither is a runtime somebody logged in to start", async () => {
+    expect((await through(fresh(), "sid:8010", ADMIN)).map((d) => d.decision)).toEqual(["allow", "allow", "allow"]);
+    expect((await through(fresh(), "sid:8011", { ...TOMCAT, noLogin: false })).map((d) => d.decision)).toEqual(["allow", "allow", "allow"]);
+    expect((await through(fresh(), "sid:8012", { ...TOMCAT, noLogin: null })).map((d) => d.decision)).toEqual(["allow", "allow", "allow"]); // not known is not "nobody"
+    expect((await through(fresh(), "sid:8013", null)).map((d) => d.decision)).toEqual(["allow", "allow", "allow"]);
+    expect((await through(fresh(), "sid:8014", TOMCAT)).map((d) => d.decision)).toEqual(["allow", "allow", "alert"]);
+  });
+
+  test("a service that looks widely at nothing sensitive is not reported, and neither are two areas with one sensitive", async () => {
+    const wide = await through(fresh(), "sid:8020", PHP, ["uname -a", "df -k", "ps aux", "ss -tlnp", "env"]);
+    expect(wide.map((d) => d.decision)).toEqual(["allow", "allow", "allow", "allow", "allow"]);
+    expect((await through(fresh(), "sid:8021", PHP, ["id", "sudo -n -l"])).map((d) => d.decision)).toEqual(["allow", "allow"]);
+  });
+
+  test("with the rule turned off a service's session is an ordinary session", async () => {
+    const opts = fresh(behaviorServices({ ARIS_BEHAVIOR_SERVICES: "off" }));
+    expect((await through(opts, "sid:8030", PHP)).map((d) => d.decision)).toEqual(["allow", "allow", "allow"]);
+    expect(opts.behavior.peek("service:sid:8030").commands).toBe(0);
+  });
+
+  test("one session can hold both: what its owner types is not reported as the server's doing", async () => {
+    // a server started from a terminal shares the terminal's session
+    const opts = fresh();
+    expect((await through(opts, "sid:8040", ADMIN)).map((d) => d.decision)).toEqual(["allow", "allow", "allow"]); // the owner: three areas, one sensitive
+    const child = await decideSession("sid:8040", "df -k", { ...opts, origin: { ...ADMIN, lineage: ["sh", "nginx", "bash", "sshd-session", "sshd"] } });
+    expect(child.decision).toBe("allow");
+    expect(opts.behavior.peek("service:sid:8040")).toEqual({ categories: ["storage"], sensitive: [], commands: 1, reported: false });
+    expect(opts.behavior.peek("sid:8040").categories).toEqual(["host", "identity", "privilege", "storage"]);
+  });
+
+  test("one look is one report: a service's session that goes on to a full sweep is not reported twice", async () => {
+    let clock = 1_000_000;
+    const opts = { ...fresh(), behavior: createBehaviorTracker({ services: behaviorServices({}), now: () => clock }) };
+    const ds = await through(opts, "sid:8050", PHP, ["id", "uname -a", "sudo -n -l", "ps aux", "cat /etc/passwd", "ss -tlnp"]);
+    expect(ds.map((d) => d.decision)).toEqual(["allow", "allow", "alert", "allow", "allow", "allow"]);
+    expect(opts.behavior.peek("sid:8050")).toMatchObject({ sensitive: ["accounts", "privilege"], reported: true }); // the sweep completed, and was not a second report
+    // once the window has emptied the session can be reported again
+    clock += BEHAVIOR.windowMs + 1;
+    expect((await through(opts, "sid:8050", PHP)).map((d) => d.decision)).toEqual(["allow", "allow", "alert"]);
+  });
+
+  test("a sweep the session already has is not followed by a service report in the same window", async () => {
+    const opts = fresh();
+    // the owner's own commands complete a sweep in a session that also holds a server's children
+    // (a console login: no origin is grouped, so nothing but this rule keeps it to one report)
+    const own = await through(opts, "sid:8060", { entry: "login", noLogin: false, lineage: ["bash", "login"] }, ["id", "uname -a", "ps aux", "ss -tlnp", "cat /etc/passwd", "sudo -n -l"]);
+    expect(own.map((d) => d.decision)).toEqual(["allow", "allow", "allow", "allow", "allow", "alert"]);
+    expect(own[5].behavior).toMatchObject({ kind: "sweep" });
+    const child = { entry: "login", noLogin: false, lineage: ["sh", "nginx", "bash", "login"] };
+    expect((await through(opts, "sid:8060", child)).map((d) => d.decision)).toEqual(["allow", "allow", "allow"]);
+    expect(opts.behavior.peek("service:sid:8060")).toMatchObject({ sensitive: ["privilege"], reported: true }); // counted, and not a second report
+  });
+
+  test("the tracker keeps area names and times for a service's window, never a command or a process name", () => {
+    let clock = 5_000;
+    const tracker = createBehaviorTracker({ services: behaviorServices({}), now: () => clock });
+    expect(observeBehavior(tracker, "sid:1", "cat /etc/shadow", PHP)).toBeNull();
+    expect(tracker.peek("service:sid:1")).toEqual({ categories: ["accounts"], sensitive: ["accounts"], commands: 1, reported: false });
+    expect(tracker.size()).toBe(2); // the session's window and the service's
+    expect(observeBehavior(tracker, null, "id", PHP)).toBeNull(); // no session, nothing to count
+    expect(observeBehavior(tracker, "", "id", PHP)).toBeNull();
+    expect(tracker.size()).toBe(2);
+  });
+
+  test("a command that carries the tripwire token is not counted for the service either", async () => {
+    const token = newTripwireToken();
+    const tripwire = createTripwire({ token, dirs: ["/opt/vault-access"] });
+    const opts = { ...fresh(), tripwire };
+    await through(opts, "sid:8070", PHP, ["id", "uname -a"]);
+    const d = await decideSession("sid:8070", `sudo -n -l; ${tripwireDecoy(token, "/opt/vault-access", "linux").command}`, { ...opts, origin: PHP });
+    expect(d).toMatchObject({ decision: "block", viaTripwire: true });
+    expect(d.behavior).toBeUndefined();
+    expect(opts.behavior.peek("service:sid:8070").sensitive).toEqual([]);
+  });
+
+  test("a narrated payload that completes a service's look is still a block for its narration, and says both", async () => {
+    const opts = fresh();
+    await through(opts, "sid:8080", PHP, ["id", "uname -a"]);
+    const d = await decideSession("sid:8080", NARRATED, { ...opts, origin: PHP });
+    expect(d).toMatchObject({ decision: "block", tier: 1 });
+    expect(d.viaBehavior).toBeUndefined();
+    expect(d.behavior).toMatchObject({ kind: "service", service: "php-fpm" });
+    expect(d.reason).toContain("a session whose commands descend from php-fpm (a program that serves requests) had also asked about");
+    expect(d.signals).not.toContain("behavior_service");
+  });
+
+  // Found live (2026-11-24): every session in the VM check came from one SSH login, that
+  // login's origin had been reported for a sweep, and the report covered a server's children.
+  test("a service's commands are not their login's doing: not counted for its origin, not covered by its report", async () => {
+    // a server started by hand in an SSH login has both a service and an origin above it
+    const opts = fresh();
+    const child = { ...ADMIN, lineage: ["sh", "nginx", "bash", "sshd-session", "sshd"] };
+    const ds = await through(opts, "sid:8090", child);
+    expect(ds[2].behavior).toMatchObject({ kind: "service", scope: "session" });
+    expect(opts.behavior.peek("origin:ssh:alice@203.0.113.7").commands).toBe(0);
+    // the login sweeps and is reported; three minutes later something comes in through the server
+    const later = fresh();
+    const own = await through(later, "sid:8091", ADMIN, ["id", "uname -a", "ps aux", "ss -tlnp", "cat /etc/passwd", "sudo -n -l"]);
+    expect(own[5].behavior).toMatchObject({ kind: "sweep" });
+    expect(later.behavior.peek("origin:ssh:alice@203.0.113.7").reported).toBe(true);
+    const through_server = await through(later, "sid:8092", child);
+    expect(through_server.map((d) => d.decision)).toEqual(["allow", "allow", "alert"]);
+    expect(through_server[2].behavior).toMatchObject({ kind: "service", service: "nginx" });
   });
 });
 
